@@ -1,0 +1,1614 @@
+<document xmlns="http://cnx.rice.edu/cnxml" xmlns:m="http://www.w3.org/1998/Math/MathML" xmlns:bib="http://bibtexml.sf.net/">
+  <title>Streaming FFT</title>
+<metadata xmlns:md="http://cnx.rice.edu/mdml">
+  <md:content-id>m43791</md:content-id>
+  <md:title>Streaming FFT</md:title>
+  <md:abstract/>
+  <md:uuid>9691ece3-7b93-460b-9062-e3710a32d750</md:uuid>
+</metadata>
+
+<content>
+    <para id="id287610">This chapter describes SFFT: a high-performance FFT library for SIMD microprocessors that
+is, in many cases, faster than the state of the art FFT libraries reviewed in <link document="m43809">Existing libraries</link>.</para><para id="id287621"><link document="m43793">Implementation details</link> described some simple implementations of the FFT and concluded
+with an analysis of the performance bottlenecks. The implementations presented in this chapter are designed to improve spatial locality, and utilize larger straight line blocks of code at the leaves, corresponding to sub-transforms of sizes 8 through to 64, in order to reduce latency and stack overheads.</para><para id="id287629">In distinct contrast to the simple FFT programs of <link document="m43793">Chapter 3</link>, this
+chapter employs meta-programming. Rather than describe FFT programs, we describe programs that <emphasis effect="italics">statically elaborate</emphasis> the FFT into a DAG of nodes representing the computation, apply some optimizing transformations to the graph, and then generate code. Many other auto-vectorization techniques, such as those employed by SPIRAL, operate at the instruction level <link target-id="bid0"/>, but the techniques presented in this chapter vectorize blocks of computation at the algorithm level of abstraction, thus enabling some of the algorithms structure to be utilized.</para><para id="id287652">Three types of implementation are described in this chapter, and the performance
+of each depends on the parameters of the transform to be computed and the characteristics of the underlying machine.
+For a given machine and FFT to be computed (which has parameters such as length and precision), the fastest configuration is selected from among a small set of up to eight possible FFT configurations – a much smaller space compared to FFTW's exhaustive search of all possible FFTs. The fastest configuration is easily selected by timing each of the possible options, but it is shown in <link document="m43790">Results and discussion</link> that it is also possible to use machine learning to build a classifier that will predict the fastest based on attributes such as the size of the cache.</para><para id="id288007">SFFT comprises three types of conjugate-pair implementation, which are:</para>
+    <list id="id288011" display="block" list-type="enumerated">
+      <item id="uid1">Fully hard-coded FFTs;
+</item>
+      <item id="uid2">Four-step FFTs with hard-coded sub-transforms;
+</item>
+      <item id="uid3">FFTs with hard-coded leaves.
+</item>
+    </list>
+    <section id="cid1">
+      <title>Fully hard-coded</title>
+      <para id="id288057">Statically elaborating a DAG that represents a depth-first recursive FFT is much like computing a depth-first
+recursive FFT: instead of performing computation at the leaves of the recursion and where smaller DFTs are combined into one, a node representing the computation is appended to the end of a list, and the list of nodes, i.e., a topological ordering of the DAG, is later translated into a program that can be compiled and executed.</para>
+      <para id="id288064">Emitting code with a vector length of 1 (i.e., scalar code or vector code where only one complex element fits in a vector register) is relatively simple and is described in <link target-id="uid4">"Vector length 1"</link>. For vector lengths above 1, vectorizing the topological ordering of nodes poses some subtle challenges, and these details are described in <link target-id="uid16">"Other vector lengths"</link>. The fully hard-coded FFTs described in this section are generally only practical for smaller sizes of transforms, typically where <m:math overflow="scroll"><m:mrow><m:mi>N</m:mi><m:mo>≤</m:mo><m:mn>128</m:mn></m:mrow></m:math>, however these techniques are expanded in later sections to scale the performance to larger sizes.</para>
+      <section id="uid4">
+        <title>Vector length 1</title>
+        <para id="id288103">A VL of 1 implies that the computation is essentially scalar, and only one complex element can fit in a vector register. An example of such a scenario is
+when using interleaved double-precision floating-point arithmetic on an SSE2 machine: one 128-bit XMM register is used to store two 64-bit floats that represent the real and imaginary parts of a complex number.</para>
+        <para id="id288109">When <m:math overflow="scroll"><m:mrow><m:mi>V</m:mi><m:mi>L</m:mi><m:mo>=</m:mo><m:mn>1</m:mn></m:mrow></m:math>, the process of generating a program for a hard-coded FFT is as follows:</para>
+        <list id="id288128" display="block" list-type="enumerated">
+          <item id="uid5">Elaborate a topological ordering of nodes, where each node represents either a computation at the leaves of the transform, or a computation in the body of the transform (i.e., where smaller sub-transforms are combined into a larger transform);
+</item>
+          <item id="uid6">Write the program header to output, including a list of variables that correspond to registers used by the nodes;
+</item>
+          <item id="uid7">Traverse the list of nodes in order, and for each node, emit a statement that performs the computation represented by the given node. If a node is the last node to use a variable, a statement storing the variable to its corresponding location in memory is also emitted;
+</item>
+          <item id="uid8">Write the program footer to output.
+</item>
+        </list>
+        <section id="uid9">
+          <title>Elaborate</title>
+          <para id="id288192"><link target-id="uid10"/> is a function, written in C++, that performs the first task in the process.
+As mentioned earlier, elaborating a topological ordering of nodes with a depth-first recursive structure is much like
+actually computing an FFT with a depth-first recursive program (cf. <link document="m43811" target-id="uid3">Listing 3 in Appendix 2</link>).
+<link target-id="uid11"/> lists the nodes contained in the list `<code display="inline">ns</code>' after elaborating a size-8
+transform by invoking <code display="inline">elaborate(8, 0, 0, 0)</code>.</para><code id="uid10" display="block" class="listing">  CSplitRadix::elaborate(int N, int ioffset, int offset, int stride) {
+    if(N &gt; 4) {
+      elaborate(N/2, ioffset, offset, stride+1);
+      if(N/4 &gt;= 4) {
+        elaborate(N/4, ioffset+(1&lt;&lt;stride), offset+(N/2), stride+2);
+        elaborate(N/4, ioffset-(1&lt;&lt;stride), offset+(3*N/4), stride+2);
+      }else{
+        CNodeLoad *n = new CNodeLoad(this, 4, ioffset, stride, 0);
+        ns.push_back(assign_leaf_registers(n));
+      }
+      for(int k=0;k&lt;N/4;k++) {
+        CNodeBfly *n = new CNodeBfly(this, 4, k, stride);
+        ns.push_back(assign_body_registers(n,k,N);
+      }
+    }else if(N==4) {
+      CNodeLoad *n = new CNodeLoad(this, 4, ioffset, stride, 1);
+      ns.push_back(assign_leaf_registers(n));
+    }else if(N==2) {
+      CNodeLoad *n = new CNodeLoad(this, 2, ioffset, stride, 1);
+      ns.push_back(assign_leaf_registers(n));
+    }
+  }
+<caption>Elaborate function for hard-coded conjugate-pair FFT</caption></code>
+          <para id="id288420">A transform is divided into sub-transforms with recursive calls at lines 4, 6 and 7, until the base cases of size 2 or size 4 are reached at the leaves of the elaboration. As well as the size-2 and size-4 base cases, which are handled at lines 20-21 and 17-18 (respectively), there is a special case where two size-2 base cases are handled in parallel at lines 9-10. This special case of handling two size-2 base cases as a larger size-4 node ensures that larger
+transforms are composed of nodes that are homogeneous in size – this is of little utility when emitting <m:math overflow="scroll"><m:mrow><m:mi>V</m:mi><m:mi>L</m:mi><m:mo>=</m:mo><m:mn>1</m:mn></m:mrow></m:math> code, but it is exploited in <link target-id="uid16">"Other vector lengths"</link> where the topological ordering of nodes is vectorized. The second row of <link target-id="uid11"/> is
+just such a special case, since two size-2 leaf nodes are being computed, and thus the size is listed as 2(x2).</para>
+          <para id="id288459">The <code display="inline">elaborate</code> function modifies the class member variable `<code display="inline">ns</code>' at lines 10, 14, 18 and 21, where it appends a new node to the back of the list. After the function returns, the <code display="inline">ns</code> list represents a topological ordering of the computation with <code display="inline">CNodeLoad</code> and <code display="inline">CNodeBfly</code> nodes. The nodes of type <code display="inline">CNodeLoad</code> represent leaf computations: these computations load elements from the input array and perform a small amount of leaf computation, leaving the result in a set of registers. The <code display="inline">CNodeBfly</code> nodes represent computations in the body of the transform: these use a twiddle factor to perform a butterfly computation on a vector of registers, leaving the result in the same registers.</para>
+          <table id="uid11" summary="">
+            <tgroup cols="5">
+              <tbody>
+                <row>
+                  <entry>Type</entry>
+                  <entry>Size</entry>
+                  <entry>Addresses</entry>
+                  <entry>Registers</entry>
+                  <entry>Twiddle</entry>
+                </row>
+                <row>
+                  <entry>
+                    <code display="inline">CNodeLoad</code>
+                  </entry>
+                  <entry>4</entry>
+                  <entry>{0,4,2,6}</entry>
+                  <entry>{0,1,2,3}</entry>
+                  <entry/>
+                </row>
+                <row>
+                  <entry>
+                    <code display="inline">CNodeLoad</code>
+                  </entry>
+                  <entry>2(x2)</entry>
+                  <entry>{1,5,7,3}</entry>
+                  <entry>{4,5,6,7}</entry>
+                  <entry/>
+                </row>
+                <row>
+                  <entry>
+                    <code display="inline">CNodeBfly</code>
+                  </entry>
+                  <entry>4</entry>
+                  <entry/>
+                  <entry>{0,2,4,6}</entry>
+                  <entry>
+                    <m:math overflow="scroll">
+                      <m:msubsup>
+                        <m:mi>ω</m:mi>
+                        <m:mn>8</m:mn>
+                        <m:mn>0</m:mn>
+                      </m:msubsup>
+                    </m:math>
+                  </entry>
+                </row>
+                <row>
+                  <entry>
+                    <code display="inline">CNodeBfly</code>
+                  </entry>
+                  <entry>4</entry>
+                  <entry/>
+                  <entry>{1,3,5,7}</entry>
+                  <entry>
+                    <m:math overflow="scroll">
+                      <m:msubsup>
+                        <m:mi>ω</m:mi>
+                        <m:mn>8</m:mn>
+                        <m:mn>1</m:mn>
+                      </m:msubsup>
+                    </m:math>
+                  </entry>
+                </row>
+              </tbody>
+            </tgroup>
+            <caption>VL-1 size-8 conjugate-pair transform nodes</caption>
+          </table>
+          <para id="id288696">The constructor for a <code display="inline">CNodeLoad</code> object computes input array addresses for the load operations using the input array offset (<code display="inline">ioffset</code>), the input array <code display="inline">stride</code>, the size of the node (the nodes instantiated at lines 9 and 17 are size-4, and the node instantiated at line 20 is size-2) and a final parameter that is non-zero if the node is a single node (the nodes instantiated at lines 17 and 20 are single nodes, while the node instantiated at line 9 is composed of two size-2 nodes).</para>
+          <para id="id288718">As the newly instantiated <code display="inline">CNodeLoad</code> objects are appended to the back of <code display="inline">ns</code> at lines 10, 14 and 21, the <code display="inline">assign_leaf_registers</code> function assigns registers to the outputs of each instance. Registers are identified with integers beginning at zero, and when each register is created it is assigned an identifier from an auto-incrementing counter (<m:math overflow="scroll"><m:msub><m:mi>R</m:mi><m:mrow><m:mi>c</m:mi><m:mi>o</m:mi><m:mi>u</m:mi><m:mi>n</m:mi><m:mi>t</m:mi><m:mi>e</m:mi><m:mi>r</m:mi></m:mrow></m:msub></m:math>). This function also maintains a map of registers to node pointers, referred to as <code display="inline">rmap</code>, where the node for a given register is the last node to reference that register.</para>
+          <para id="id287570">The constructor for a <code display="inline">CNodeBfly</code> object uses <code display="inline">k</code> and <code display="inline">stride</code> to compute a twiddle factor for the new instance of a butterfly computation node. When the new instance of <code display="inline">CNodeBfly</code> is appended to the end of <code display="inline">ns</code> at line 14, the <code display="inline">assign_body_registers</code> function assigns registers <m:math overflow="scroll"><m:msub><m:mi>R</m:mi><m:mi>i</m:mi></m:msub></m:math> to a node of size <m:math overflow="scroll"><m:msub><m:mi>N</m:mi><m:mi mathvariant="monospace">node</m:mi></m:msub></m:math> with the following logic:</para>
+          <equation id="uid12">
+            <m:math overflow="scroll" mode="display">
+              <m:mrow>
+                <m:msub>
+                  <m:mi>R</m:mi>
+                  <m:mi>i</m:mi>
+                </m:msub>
+                <m:mo>=</m:mo>
+                <m:msub>
+                  <m:mi>R</m:mi>
+                  <m:mi mathvariant="monospace">counter</m:mi>
+                </m:msub>
+                <m:mo>-</m:mo>
+                <m:mi>N</m:mi>
+                <m:mo>+</m:mo>
+                <m:mi>k</m:mi>
+                <m:mo>+</m:mo>
+                <m:mi>i</m:mi>
+                <m:mo>×</m:mo>
+                <m:mfrac>
+                  <m:mi>N</m:mi>
+                  <m:mn>4</m:mn>
+                </m:mfrac>
+              </m:mrow>
+            </m:math>
+          </equation>
+          <para id="id289069">where <m:math overflow="scroll"><m:mrow><m:mi>i</m:mi><m:mo>=</m:mo><m:mn>0</m:mn><m:mo>,</m:mo><m:mo>⋯</m:mo><m:mo>,</m:mo><m:msub><m:mi>N</m:mi><m:mi mathvariant="monospace">node</m:mi></m:msub><m:mo>-</m:mo><m:mn>1</m:mn></m:mrow></m:math> and <m:math overflow="scroll"><m:msub><m:mi>R</m:mi><m:mi mathvariant="monospace">counter</m:mi></m:msub></m:math> is the auto-incrementing register counter.
+The <code display="inline">assign_body_registers</code> functions also updates the map of registers to node pointers by
+setting <m:math overflow="scroll"><m:mrow><m:mi mathvariant="monospace">rmap</m:mi><m:mo>[</m:mo><m:msub><m:mi>R</m:mi><m:mi>i</m:mi></m:msub><m:mo>]</m:mo></m:mrow></m:math> to point to the new instance of <code display="inline">CNodeBfly</code>.</para>
+        </section>
+        <section id="uid13">
+          <title>Emitting code</title>
+          <code id="uid14" display="block" class="listing">  void sfft_dcf8_hc(sfft_plan_t *p, const void *vin, void *vout) {
+    const SFFT_D *in = vin;
+    SFFT_D *out = vout;
+    SFFT_R r0,r1,r2,r3,r4,r5,r6,r7;
+ 
+    L_4(in+0,in+8,in+4,in+12,&amp;r0,&amp;r1,&amp;r2,&amp;r3);
+    L_2(in+2,in+10,in+14,in+6,&amp;r4,&amp;r5,&amp;r6,&amp;r7);
+    K_0(&amp;r0,&amp;r2,&amp;r4,&amp;r6);
+    S_4(r0,r2,r4,r6,out+0,out+4,out+8,out+12);
+    K_N(VLIT2(0.7071,0.7071),VLIT2(0.7071,-0.7071),&amp;r1,&amp;r3,&amp;r5,&amp;r7);
+    S_4(r1,r3,r5,r7,out+2,out+6,out+10,out+14);
+  }
+<caption>Hard-coded VL-1 size-8 FFT</caption></code>
+          <para id="id289273">Given a list of nodes, it is a simple process to emit C code that can be compiled to actually compute the transform.</para>
+          <para id="id289277">The example in <link target-id="uid14"/> would be emitted from the list of four nodes in <link target-id="uid11"/>. Lines 1–4 are emitted from a function that generates a header, and line 13 is emitted from a
+function that generates a footer. Lines 6–11 are generated based on the list of nodes.</para><para id="id289294"><link target-id="uid14"/> contains references to several types, functions and macros that use upper-case identifiers – these are <emphasis effect="italics">primitive</emphasis> functions or types that have been predefined as inline functions or macros. A benefit of using primitives in this way is that the details specific to numerical representation and the underlying machine have been abstracted away; thus, the same function can be compiled for a variety of types and machines by simply including a different header file with different primitives. <link target-id="uid14"/>, for example, could be compiled for double-precision arithmetic on an SSE2 machine by including <code display="inline">sse_double.h</code>, or it could be compiled with much slower scalar arithmetic by including <code display="inline">scalar.h</code>. The same code can even be used, without modification, to compute forward and backwards transforms, by using C preprocessor directives to conditionally alter the macros.</para><para id="id289332">In order to accommodate mixed numerical representations, the signature of the outermost function references data with void pointers. In the case of the double-precision example in <link target-id="uid14"/>, <code display="inline">SFFT_D</code> would be defined to be <code display="inline">double</code> in the appropriate header file, and the void pointers are then cast to <code display="inline">SFFT_D</code> pointers.</para><para id="id289360">The size-8 transform in <link target-id="uid11"/> uses 8 registers, and thus a declaration of 8 registers of type <code display="inline">SFFT_R</code> has been emitted at line 4 in <link target-id="uid14"/>. In the case of double-precision arithmetic on a SSE2 machine, <code display="inline">SFFT_R</code> is defined as <code display="inline">__m128d</code> in <code display="inline">sse_double.h</code>.</para><para id="id289395">The first two rows of <link target-id="uid11"/> correspond to lines 6 and 7 of <link target-id="uid14"/>, respectively. The <code display="inline">L_4</code> primitive is used to compute the size-4 leaf node in the first row of the table. The second row is a load/leaf node of size 2(x2), indicating two size-2 nodes in parallel, which is computed with the <code display="inline">L_2</code> primitive. The input addresses in the table are the addresses of complex words, while the addresses in the generated code refer to the real and imaginary parts of a complex word, and thus the addresses from <link target-id="uid11"/> are multiplied by a factor of 2 to obtain the addresses in <link target-id="uid14"/>.</para><para id="id289433">The final two <code display="inline">CNodeBfly</code> nodes of <link target-id="uid11"/> correspond to the <code display="inline">K_0</code> and <code display="inline">K_N</code> sub-transform (a.k.a. butterfly) primitives at lines 8 and 10, respectively. Because the node in the third row of <link target-id="uid11"/> has a twiddle factor of <m:math overflow="scroll"><m:msubsup><m:mi>ω</m:mi><m:mn>8</m:mn><m:mn>0</m:mn></m:msubsup></m:math> (i.e., unity), the computation requires no multiplication, and the <code display="inline">K_0</code> primitive is used for this special case. The <code display="inline">K_N</code> primitive at line 10 does require a twiddle factor, which is passed to <code display="inline">K_N</code> as two vector literals that represent the twiddle factor in unpacked form.<footnote id="uid15">For the purposes of brevity, the precision has been truncated to only a few decimal places.</footnote> <link document="m43793" target-id="uid24">Fast interleaved complex multiplication</link> describes how interleaved complex multiplication is faster if one operand is pre-unpacked.</para><para id="id289510">After each node is processed, the registers that have been used by it are checked in a map (<code display="inline">rmap</code>) that maps each register to the last node to have used that register. If the current node is the last node to have used a register, the register is stored to memory. In the case of the transform in <link target-id="uid14"/>, four registers are stored with an instance of the <code display="inline">S_4</code> primitive at lines 9 and 11. In contrast to the load operations at the leaves, which are decimated-in-time and thus effectively pseudo-random memory accesses, the store operations are to linear regions of memory, the addresses of which can be determined from each register's integer identifier. The store address offset for data in register <m:math overflow="scroll"><m:msub><m:mi>R</m:mi><m:mi>i</m:mi></m:msub></m:math> is simply <m:math overflow="scroll"><m:mrow><m:mi>i</m:mi><m:mo>×</m:mo><m:mn>2</m:mn><m:mo>×</m:mo><m:mi>V</m:mi><m:mi>L</m:mi></m:mrow></m:math>.</para></section>
+      </section>
+      <section id="uid16">
+        <title>Other vector lengths</title>
+        <para id="id289578">If <m:math overflow="scroll"><m:mrow><m:mi>V</m:mi><m:mi>L</m:mi><m:mo>&gt;</m:mo><m:mn>1</m:mn></m:mrow></m:math>, the list of nodes that results from the <code display="inline">elaborate</code> function in <link target-id="uid10"/> is vectorized. Broadly speaking, <code display="inline">CNodeLoad</code> objects that operate on adjacent
+memory locations are collected together and computed in parallel. After each such computation, each position in a vector register contains an element that belongs to a different node. Transposes are then used to transform sets of vector registers such that each register contains elements from one node. Finally, the <code display="inline">CNodeBfly</code> objects can be easily computed in parallel, as they were with VL-1 because the elements in each vector register correspond to one node.</para><section id="uid17">
+          <title>Overview</title>
+          <para id="id289631"><link target-id="uid18"/> lists the nodes that represent a VL-1 size-16 transform. A VL of 2 implies that each vector register contains 2 complex words, and load operations on each of the 4 addresses in the first row of <link target-id="uid18"/> will also load the complex words in the adjacent memory locations. Note that the complex words that would be incidentally loaded in the upper half of the VL-2 registers are the complex words that the third <code display="inline">CNodeLoad</code> object at row 5 would have loaded. This is exploited to load and compute the first and third <code display="inline">CNodeLoad</code> objects in parallel.</para>
+          <table id="uid18" summary="">
+            <tgroup cols="5">
+              <tbody>
+                <row>
+                  <entry>Type</entry>
+                  <entry>Size</entry>
+                  <entry>Addresses</entry>
+                  <entry>Registers</entry>
+                  <entry>Twiddle</entry>
+                </row>
+                <row>
+                  <entry>
+                    <code display="inline">CNodeLoad</code>
+                  </entry>
+                  <entry>4</entry>
+                  <entry>{0,8,4,12}</entry>
+                  <entry>{0,1,2,3}</entry>
+                  <entry/>
+                </row>
+                <row>
+                  <entry>
+                    <code display="inline">CNodeLoad</code>
+                  </entry>
+                  <entry>2(x2)</entry>
+                  <entry>{2,10,14,6}</entry>
+                  <entry>{4,5,6,7}</entry>
+                  <entry/>
+                </row>
+                <row>
+                  <entry>
+                    <code display="inline">CNodeBfly</code>
+                  </entry>
+                  <entry>4</entry>
+                  <entry/>
+                  <entry>{0,2,4,6}</entry>
+                  <entry>
+                    <m:math overflow="scroll">
+                      <m:msubsup>
+                        <m:mi>ω</m:mi>
+                        <m:mrow>
+                          <m:mn>16</m:mn>
+                        </m:mrow>
+                        <m:mn>0</m:mn>
+                      </m:msubsup>
+                    </m:math>
+                  </entry>
+                </row>
+                <row>
+                  <entry>
+                    <code display="inline">CNodeBfly</code>
+                  </entry>
+                  <entry>4</entry>
+                  <entry/>
+                  <entry>{1,3,5,7}</entry>
+                  <entry>
+                    <m:math overflow="scroll">
+                      <m:msubsup>
+                        <m:mi>ω</m:mi>
+                        <m:mrow>
+                          <m:mn>16</m:mn>
+                        </m:mrow>
+                        <m:mn>2</m:mn>
+                      </m:msubsup>
+                    </m:math>
+                  </entry>
+                </row>
+                <row>
+                  <entry>
+                    <code display="inline">CNodeLoad</code>
+                  </entry>
+                  <entry>4</entry>
+                  <entry>{1,9,5,13}</entry>
+                  <entry>{8,9,10,11}</entry>
+                  <entry/>
+                </row>
+                <row>
+                  <entry>
+                    <code display="inline">CNodeLoad</code>
+                  </entry>
+                  <entry>4</entry>
+                  <entry>{15,7,3,11}</entry>
+                  <entry>{12,13,14,15}</entry>
+                  <entry/>
+                </row>
+                <row>
+                  <entry>
+                    <code display="inline">CNodeBfly</code>
+                  </entry>
+                  <entry>4</entry>
+                  <entry/>
+                  <entry>{0,4,8,12}</entry>
+                  <entry>
+                    <m:math overflow="scroll">
+                      <m:msubsup>
+                        <m:mi>ω</m:mi>
+                        <m:mrow>
+                          <m:mn>16</m:mn>
+                        </m:mrow>
+                        <m:mn>0</m:mn>
+                      </m:msubsup>
+                    </m:math>
+                  </entry>
+                </row>
+                <row>
+                  <entry>
+                    <code display="inline">CNodeBfly</code>
+                  </entry>
+                  <entry>4</entry>
+                  <entry/>
+                  <entry>{1,5,9,13}</entry>
+                  <entry>
+                    <m:math overflow="scroll">
+                      <m:msubsup>
+                        <m:mi>ω</m:mi>
+                        <m:mrow>
+                          <m:mn>16</m:mn>
+                        </m:mrow>
+                        <m:mn>1</m:mn>
+                      </m:msubsup>
+                    </m:math>
+                  </entry>
+                </row>
+                <row>
+                  <entry>
+                    <code display="inline">CNodeBfly</code>
+                  </entry>
+                  <entry>4</entry>
+                  <entry/>
+                  <entry>{2,6,10,14}</entry>
+                  <entry>
+                    <m:math overflow="scroll">
+                      <m:msubsup>
+                        <m:mi>ω</m:mi>
+                        <m:mrow>
+                          <m:mn>16</m:mn>
+                        </m:mrow>
+                        <m:mn>2</m:mn>
+                      </m:msubsup>
+                    </m:math>
+                  </entry>
+                </row>
+                <row>
+                  <entry>
+                    <code display="inline">CNodeBfly</code>
+                  </entry>
+                  <entry>4</entry>
+                  <entry/>
+                  <entry>{3,7,11,15}</entry>
+                  <entry>
+                    <m:math overflow="scroll">
+                      <m:msubsup>
+                        <m:mi>ω</m:mi>
+                        <m:mrow>
+                          <m:mn>16</m:mn>
+                        </m:mrow>
+                        <m:mn>3</m:mn>
+                      </m:msubsup>
+                    </m:math>
+                  </entry>
+                </row>
+              </tbody>
+            </tgroup>
+            <caption>VL-1 size-16 conjugate-pair transform nodes</caption>
+          </table><table id="eip-818" summary="VL-2 size-16 conjugate-pair transform nodes">
+<tgroup cols="5"><tbody>
+  <row>
+    <entry>Type</entry>
+    <entry>Sizes</entry>
+    <entry>Addresses</entry>
+    <entry>Registers</entry>
+    <entry>Twiddles</entry>
+  </row>
+  <row>
+    <entry>Load</entry>
+    <entry>{4,4}</entry>
+    <entry>{{0,1},{8,9},{4,5},{12,13}}</entry>
+    <entry>{{0,1},{2,3},{8,9},{10,11}}</entry>
+    <entry/>
+  </row>
+  <row>
+    <entry>Load</entry>
+    <entry>{2(x2),4}</entry>
+    <entry>{{2,3},{10,11},{14,15},{6,7}}</entry>
+    <entry>{{4,5},{6,7},{14,15},{12,13}}</entry>
+    <entry/>
+  </row>
+  <row>
+    <entry>Bfly</entry>
+    <entry>{4,4}</entry>
+    <entry/>
+    <entry>{{0,1},{2,3},{4,5},{6,7}}</entry>
+    <entry>{
+<m:math overflow="scroll">
+                      <m:msubsup>
+                        <m:mi>ω</m:mi>
+                        <m:mrow>
+                          <m:mn>16</m:mn>
+                        </m:mrow>
+                        <m:mn>0</m:mn>
+                      </m:msubsup>
+                    </m:math>,
+<m:math overflow="scroll">
+                      <m:msubsup>
+                        <m:mi>ω</m:mi>
+                        <m:mrow>
+                          <m:mn>16</m:mn>
+                        </m:mrow>
+                        <m:mn>2</m:mn>
+                      </m:msubsup>
+                    </m:math>
+}
+</entry>
+  </row>
+  <row>
+    <entry>Bfly</entry>
+    <entry>{4,4}</entry>
+    <entry/>
+    <entry>{{0,1},{4,5},{8,9},{12,13}}</entry>
+    <entry>
+{
+<m:math overflow="scroll">
+                      <m:msubsup>
+                        <m:mi>ω</m:mi>
+                        <m:mrow>
+                          <m:mn>16</m:mn>
+                        </m:mrow>
+                        <m:mn>0</m:mn>
+                      </m:msubsup>
+                    </m:math>,
+<m:math overflow="scroll">
+                      <m:msubsup>
+                        <m:mi>ω</m:mi>
+                        <m:mrow>
+                          <m:mn>16</m:mn>
+                        </m:mrow>
+                        <m:mn>1</m:mn>
+                      </m:msubsup>
+                    </m:math>
+}
+</entry>
+  </row>
+  <row>
+    <entry>Bfly</entry>
+    <entry>{4,4}</entry>
+    <entry/>
+    <entry>{{2,3},{6,7},{10,11},{14,15}}</entry>
+    <entry>
+{
+<m:math overflow="scroll">
+                      <m:msubsup>
+                        <m:mi>ω</m:mi>
+                        <m:mrow>
+                          <m:mn>16</m:mn>
+                        </m:mrow>
+                        <m:mn>2</m:mn>
+                      </m:msubsup>
+                    </m:math>,
+<m:math overflow="scroll">
+                      <m:msubsup>
+                        <m:mi>ω</m:mi>
+                        <m:mrow>
+                          <m:mn>16</m:mn>
+                        </m:mrow>
+                        <m:mn>3</m:mn>
+                      </m:msubsup>
+                    </m:math>
+}
+
+</entry>
+  </row>
+</tbody>
+
+
+</tgroup><caption>VL-2 size-16 conjugate-pair transform nodes</caption>
+</table><!--Table that contain tables are not converted.-->
+          <para id="id290484">The second <code display="inline">CNodeLoad</code> object computes two size-2 leaf transforms in parallel, while the last <code display="inline">CNodeLoad</code> object computes a size-4 leaf transform. Because the size-4 transform is composed of two size-2 transforms, and memory addresses of the fourth <code display="inline">CNodeLoad</code> are adjacent (although permuted), some of the computation can be computed in parallel.</para>
+          <para id="id290506">If the <code display="inline">CNodeLoad</code> objects at rows 1 and 5 are computed in parallel, the output will be four VL-2 registers: {{0,8}, {1,9}, {2,10}, {3,11}} – i.e., the first register contains what would have been register 0 in the lower half, and what would have been register 8 in the top half etc. Similarly, computing rows 2 and 6 in parallel would yield four VL-2 registers: {{4,14}, {5,15}, {6,12}, {7,13}} – note the permutation of the upper halves in this case. These registers are transposed to {{0,1}, {2,3}, {8,9}, {10,11}} and {{4,5}, {6,7}, {14,15}, {12,13}}, as in row 1 and 2 of <link target-id="eip-818"/>.</para><para id="id290527">With the transposed VL-2 registers, it is now possible to compute <code display="inline">CNodeBfly</code> nodes in parallel. For example, rows 2 and 3 of <link target-id="uid18"/> can be computed in parallel on four VL-2 registers represented by {{0,1}, {2,3}, {4,5}, {6,7}}, as in row 3 of <link target-id="eip-818"/>.</para></section>
+        <section id="uid20">
+          <title>Implementation</title>
+          <para id="id290556"><link target-id="uid22"/> is a C++ implementation of the <code display="inline">vectorize_loads</code> function. This
+function modifies a topological ordering of nodes (the class member variable <code display="inline">ns</code>) and uses two other functions: <code display="inline">find_parallel_loads</code>, which searches forward from the current node to find another <code display="inline">CNodeLoad</code> that shares adjacent memory addresses; and <code display="inline">merge_loads(a,b)</code>, which adds the addresses, registers and type of <code display="inline">b</code> to <code display="inline">a</code>. Type introspection is used at lines 7 and 36 (and in other Listings), to differentiate between the two types of object.</para>
+          <para id="id290605"><link target-id="uid21"/> is a C++ implementation of the <code display="inline">vectorize_ks</code> function. For each <code display="inline">CNodeBfly</code> node, the function searches forward for another <code display="inline">CNodeBfly</code> that does not have a register dependence. Once found, the registers of the latter node are added to the former node, and the latter node erased. Finally, at line 19, the registers of the vectorized <code display="inline">CNodeBfly</code> node are merged using a perfect shuffle, which is then recursively applied on each half of the list. The effect is a merge that works for any power of 2 vector length.</para>
+          <code id="uid21" display="block" class="listing">  void CSplitRadix::vectorize_ks() {
+    vector&lt;CNodeHardCoded *&gt;::iterator i;
+    for(i=ns.begin(); i != ns.end();++i) {
+      if(!(*i)-&gt;type().compare(``blockbfly'')) {
+        vector&lt;CNodeHardCoded *&gt;::iterator j = i+1, pj = i;
+        int count = 1;
+        while(j != ns.end() &amp;&amp; count &lt; VL) {
+          if(!(*j)-&gt;type().compare(``blockbfly'') &amp;&amp; !register_dependence(*i, *j)) {
+            (*i)-&gt;rs.insert( (*i)-&gt;rs.end(), (*j)-&gt;rs.begin(), (*j)-&gt;rs.end());
+            ns.erase(j);
+            count++;
+            j = pj+1;
+          }else {
+            pj = j; ++j;
+          }	
+        }
+        (*i)-&gt;merge_rs();
+      }
+    }
+  }
+<caption>Body node vectorization</caption></code>
+          <code id="uid22" display="block" class="listing">  CNodeLoad *
+  CSplitRadix::find_parallel_load(vector&lt;CNodeHardCoded*&gt;::iterator i){
+    CNodeLoad *b = (CNodeLoad *)(*i);	
+    for(int k=0;k&lt;((N&gt;2)?4:2);k++) {
+      vector&lt;CNodeHardCoded *&gt;::iterator j = i+1;
+      while(j != ns.end()) {
+        if(!(*j)-&gt;type().compare(``blockload'')) {
+          CNodeLoad *b2 = (CNodeLoad *)(*j);
+          if(b2-&gt;iaddrs[k] &gt; b-&gt;iaddrs[0] &amp;&amp; b2-&gt;iaddrs[k] &lt; b-&gt;iaddrs[0]+VL) {
+            ns.erase(j);
+            return b2;
+          }
+          ++j;
+        }
+      }
+    }
+    return NULL;
+  }
+  void CSplitRadix::merge_loads(CNodeLoad *b1, CNodeLoad *b2) {
+    for(int i=0;i&lt;b1-&gt;size;i++) {
+      for(int j=0;j&lt;b2-&gt;iaddrs.size();j++) {
+        if(b2-&gt;iaddrs[j] &gt; b1-&gt;iaddrs[i] &amp;&amp; b2-&gt;iaddrs[j] &lt; b1-&gt;iaddrs[i]+VL) {
+          b1-&gt;iaddrs.push_back(b2-&gt;iaddrs[j]);
+          b1-&gt;rs.push_back(b2-&gt;rs[j]);
+          if(rmap[b2-&gt;rs[j]] == b2) rmap[b2-&gt;rs[j]] = b1;
+        }
+      }
+    }
+    b1-&gt;types.push_back(b2-&gt;types[0]);
+  }
+  void CSplitRadix::vectorize_loads() {
+    vector&lt;CNodeHardCoded *&gt;::iterator i;
+    for(i=ns.begin(); i != ns.end();++i) {
+      if(!(*i)-&gt;type().compare(``blockload'')) {
+        while(CNodeLoad *b2 = find_parallel_load(i))
+          merge_loads((CNodeLoad *)(*i), b2);
+      }
+    }
+  }
+<caption>Leaf node vectorization</caption></code>
+          <para id="id291344">If <code display="inline">vectorize_loads</code> and <code display="inline">vectorize_ks</code> are invoked with <m:math overflow="scroll"><m:mrow><m:mi>V</m:mi><m:mi>L</m:mi><m:mo>=</m:mo><m:mn>2</m:mn></m:mrow></m:math> on the topological ordering of nodes in <link target-id="uid18"/>, the result is the vectorized node list shown in <link target-id="eip-818"/>. As in <link target-id="uid13">"Emitting code"</link>, emitting code is a fairly simple process, and <link target-id="uid26"/> is the code emitted
+from the node list in <link target-id="uid19"/>. There are only a few differences to note about the emitted code when <m:math overflow="scroll"><m:mrow><m:mi>V</m:mi><m:mi>L</m:mi><m:mo>&gt;</m:mo><m:mn>1</m:mn></m:mrow></m:math>.</para><list id="id291417" display="block" list-type="enumerated">
+            <item id="uid23">The register identifiers in line 4 of <link target-id="uid26"/> consist of a list of two integers delimited with an underscore. The integers listed in each register's
+name are the VL-1 registers that were subsumed to create the larger register (cf. VL-1 code in <link target-id="uid14"/>);
+</item>
+            <item id="uid24">The leaf primitives (lines 6 and 7 in <link target-id="uid26"/>) have a list of underscore delimited
+integers in the name, where each integer corresponds to the type of sub-transform to be computed on that position in the vector registers. For example, the <code display="inline">L_4_4</code> primitive is named to indicate a size-4 leaf operation on the lower and upper halves of the vector registers, while the <code display="inline">L_2_4</code> primitive performs two size-2 leaf operations on the lower half of the registers and a size-4 leaf operation on the upper halves;
+</item>
+            <item id="uid25">The body node primitives (<code display="inline">K_N</code>) and store primitives (<code display="inline">S_4</code>) are unchanged because they perform the same operation on each element of the vector registers. This is as a result of the register transposes that were previously performed on the outputs of the leaf primitives.
+</item>
+          </list>
+          <code id="uid26" display="block" class="listing">void sfft_fcf16_hc(sfft_plan_t *p, const void *vin, void *vout) {
+  const SFFT_D *in = vin;
+  SFFT_D *out = vout;
+  SFFT_R r0_1,r2_3,r4_5,r6_7,r8_9,r10_11,r12_13,r14_15;
+ 
+  L_4_4(in+0,in+16,in+8,in+24,&amp;r0_1,&amp;r2_3,&amp;r8_9,&amp;r10_11);
+  L_2_4(in+4,in+20,in+28,in+12,&amp;r4_5,&amp;r6_7,&amp;r14_15,&amp;r12_13);
+  K_N(VLIT4(0.7071,0.7071,1,1),
+      VLIT4(0.7071,-0.7071,0,-0),
+      &amp;r0_1,&amp;r2_3,&amp;r4_5,&amp;r6_7);
+  K_N(VLIT4(0.9239,0.9239,1,1),
+      VLIT4(0.3827,-0.3827,0,-0),
+      &amp;r0_1,&amp;r4_5,&amp;r8_9,&amp;r12_13);
+  S_4(r0_1,r4_5,r8_9,r12_13,out+0,out+8,out+16,out+24);
+  K_N(VLIT4(0.3827,0.3827,0.7071,0.7071),
+      VLIT4(0.9239,-0.9239,0.7071,-0.7071),
+      &amp;r2_3,&amp;r6_7,&amp;r10_11,&amp;r14_15);
+  S_4(r2_3,r6_7,r10_11,r14_15,out+4,out+12,out+20,out+28);
+}
+<caption>Hard-coded VL-2 size-16 FFT</caption></code>
+        </section>
+        <section id="uid27">
+          <title>Scalability</title>
+          <para id="id291690">So far, hard-coded transforms of vector length 1 and 2 have been presented. On Intel machines, VL-1 can be used to
+compute double-precision transforms with SSE2, while VL-2 can be used to compute double-precision
+transforms with AVX <emphasis effect="italics">and</emphasis> single-precision transforms with SSE. The method of vectorization presented in this chapter scales above
+VL-2, and has been successfully used to compute VL-4 single-precision transforms with AVX.</para>
+          <para id="id291702">The leaf primitives were coded by hand in all cases; VL-1 required <code display="inline">L_2</code> and <code display="inline">L_4</code>, while
+VL-2 required <code display="inline">L_2_2</code>, <code display="inline">L_2_4</code>, <code display="inline">L_4_2</code> and <code display="inline">L_4_4</code>. In the case of VL-4, not all permutations
+of possible leaf primitive were required – only 11 out of 16 were needed for the transforms that were generated.</para>
+          <para id="id291742">It is an easy exercise to code the leaf primitives for <m:math overflow="scroll"><m:mrow><m:mi>V</m:mi><m:mi>L</m:mi><m:mo>≤</m:mo><m:mn>4</m:mn></m:mrow></m:math> by hand, but for future machines that might feature vector lengths larger than 4, the leaf primitives could be automatically generated (in fact, <link target-id="uid86">"Other vector lengths"</link> is concerned with automatic generation of leaf sub-transforms at another level of scale).</para>
+        </section>
+        <section id="uid28">
+          <title>Constraints</title>
+          <para id="id291780">For a transform of size <m:math overflow="scroll"><m:mi>N</m:mi></m:math> and leaf node size of <m:math overflow="scroll"><m:mi>S</m:mi></m:math> (<m:math overflow="scroll"><m:mrow><m:mi>S</m:mi><m:mo>=</m:mo><m:mn>4</m:mn></m:mrow></m:math> in the examples in this chapter), the following constraint must be
+satisfied:</para>
+          <equation id="uid29">
+            <m:math overflow="scroll" mode="display">
+              <m:mrow>
+                <m:mi>N</m:mi>
+                <m:mo>/</m:mo>
+                <m:mi>V</m:mi>
+                <m:mi>L</m:mi>
+                <m:mo>≥</m:mo>
+                <m:mi>S</m:mi>
+              </m:mrow>
+            </m:math>
+          </equation>
+          <para id="id291843">If this constraint is not satisfied, the size of either VL or <m:math overflow="scroll"><m:mi>S</m:mi></m:math> must be reduced. In practice, VL and <m:math overflow="scroll"><m:mi>S</m:mi></m:math> are small relative to the size of most transforms, and thus these corner cases typically only occur for very small
+sized transforms. Such an example is a size-2 transform when <m:math overflow="scroll"><m:mrow><m:mi>V</m:mi><m:mi>L</m:mi><m:mo>=</m:mo><m:mn>2</m:mn></m:mrow></m:math> and <m:math overflow="scroll"><m:mrow><m:mi>S</m:mi><m:mo>=</m:mo><m:mn>4</m:mn></m:mrow></m:math>, where in this case the transform is too small to be computed with SIMD operations and should be computed with scalar arithmetic instead.</para>
+        </section>
+      </section>
+      <section id="uid30"><title>Performance</title><figure id="uid31" orient="horizontal">
+          <subfigure id="uid32">
+            <media id="uid32_media" alt="">
+              <image mime-type="image/png" src="../../media/hardcoded_sse_single.png" id="uid32_onlinemedia" width="250"><!-- NOTE: attribute width changes image size online (pixels). original width is 250. --></image>
+              <image mime-type="application/postscript" for="pdf" src="../../media/hardcoded_sse_single.eps" id="uid32_printmedia" print-width="0.65">
+                <!--NOTE: attribute width changes image size in printed PDF (if specified in .tex file)-->
+              </image>
+            </media>
+            <caption>Single-precision, SSE (VL-2)</caption>
+          </subfigure>
+          <subfigure id="uid33">
+            <media id="uid33_media" alt="">
+              <image mime-type="image/png" src="../../media/hardcoded_sse_double.png" id="uid33_onlinemedia" width="250"><!-- NOTE: attribute width changes image size online (pixels). original width is 250. --></image>
+              <image mime-type="application/postscript" for="pdf" src="../../media/hardcoded_sse_double.eps" id="uid33_printmedia" print-width="0.65">
+                <!--NOTE: attribute width changes image size in printed PDF (if specified in .tex file)-->
+              </image>
+            </media>
+            <caption>Double-precision, SSE (VL-1)</caption>
+          </subfigure>
+          <subfigure id="uid34">
+            <media id="uid34_media" alt="">
+              <image mime-type="image/png" src="../../media/hardcoded_avx_single.png" id="uid34_onlinemedia" width="250"><!-- NOTE: attribute width changes image size online (pixels). original width is 250. --></image>
+              <image mime-type="application/postscript" for="pdf" src="../../media/hardcoded_avx_single.eps" id="uid34_printmedia" print-width="0.65">
+                <!--NOTE: attribute width changes image size in printed PDF (if specified in .tex file)-->
+              </image>
+            </media>
+            <caption>Single-precision, AVX (VL-4)</caption>
+          </subfigure>
+          <subfigure id="uid35">
+            <media id="uid35_media" alt="">
+              <image mime-type="image/png" src="../../media/hardcoded_avx_double.png" id="uid35_onlinemedia" width="250"><!-- NOTE: attribute width changes image size online (pixels). original width is 250. --></image>
+              <image mime-type="application/postscript" for="pdf" src="../../media/hardcoded_avx_double.eps" id="uid35_printmedia" print-width="0.65">
+                <!--NOTE: attribute width changes image size in printed PDF (if specified in .tex file)-->
+              </image>
+            </media>
+            <caption>Double-precision, AVX (VL-2)</caption>
+          </subfigure>
+          <caption>Performance of hard-coded FFTs on a Macbook Air 4,2.</caption>
+        </figure>
+        <para id="id291982"><link target-id="uid31"/> shows the results of a benchmark for transforms of size 4 through to 1024 running on a Macbook Air 4,2. The speed of FFTW 3.3 running in estimate and patient modes is also shown for comparison.</para>
+        <para id="id291992">FFTW running in patient mode evaluates a huge configuration space of parameters, while the hard-coded FFT required no calibration.</para>
+        <para id="id291996">A variety of vector lengths are represented, and the hard-coded FFTs have good performance while <m:math overflow="scroll"><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mi>V</m:mi><m:mi>L</m:mi><m:mo>≤</m:mo><m:mn>128</m:mn></m:mrow></m:math>. After this point, performance drops off and other techniques should be used. The following sections use the hard-coded FFT as a foundation for scaling to larger sizes of transforms.</para>
+      </section></section>
+    <section id="cid2">
+      <title>Hard-coded four-step</title>
+      <para id="id292032">This section presents an implementation of the four-step algorithm <link target-id="bid1"/> that leverages hard-coded sub-transforms to compute
+larger transforms. The implementation uses an implicit memory transpose (along with vector register transposes) and scales particularly well with VL. In contrast to the fully hard-coded implementation in the
+previous section, the four-step implementation requires no new leaf primitives as VL increases, i.e., the code
+is much the same when <m:math overflow="scroll"><m:mrow><m:mi>V</m:mi><m:mi>L</m:mi><m:mo>&gt;</m:mo><m:mn>1</m:mn></m:mrow></m:math> as it is when <m:math overflow="scroll"><m:mrow><m:mi>V</m:mi><m:mi>L</m:mi><m:mo>=</m:mo><m:mn>1</m:mn></m:mrow></m:math>.</para>
+      <section id="uid36">
+        <title>The four-step algorithm</title>
+        <para id="id292088">A transform of size <m:math overflow="scroll"><m:mi>N</m:mi></m:math> is decomposed into a two-dimensional array of size <m:math overflow="scroll"><m:mrow><m:msub><m:mi>n</m:mi><m:mn>1</m:mn></m:msub><m:mo>×</m:mo><m:msub><m:mi>n</m:mi><m:mn>2</m:mn></m:msub></m:mrow></m:math> where <m:math overflow="scroll"><m:mrow><m:mi>N</m:mi><m:mo>=</m:mo><m:msub><m:mi>n</m:mi><m:mn>1</m:mn></m:msub><m:msub><m:mi>n</m:mi><m:mn>2</m:mn></m:msub></m:mrow></m:math>. Selecting <m:math overflow="scroll"><m:mrow><m:msub><m:mi>n</m:mi><m:mn>1</m:mn></m:msub><m:mo>=</m:mo><m:msub><m:mi>n</m:mi><m:mn>2</m:mn></m:msub><m:mo>=</m:mo><m:msqrt><m:mi>N</m:mi></m:msqrt></m:mrow></m:math> (or close) often obtains the best performance results <link target-id="bid1"/>. When either of the factors is larger than the other, it is the larger of the two factors that will determine performance, because the larger factor effectively brings the memory wall closer. The four steps of the algorithm are:</para>
+        <list id="id292191" display="block" list-type="enumerated">
+          <item id="uid37">Compute <m:math overflow="scroll"><m:msub><m:mi>n</m:mi><m:mn>1</m:mn></m:msub></m:math> FFTs of length <m:math overflow="scroll"><m:msub><m:mi>n</m:mi><m:mn>2</m:mn></m:msub></m:math> along the columns of the array;
+</item>
+          <item id="uid38">Multiply each element of the array with <m:math overflow="scroll"><m:msubsup><m:mi>ω</m:mi><m:mi>N</m:mi><m:mrow><m:mi>i</m:mi><m:mi>j</m:mi></m:mrow></m:msubsup></m:math>, where <m:math overflow="scroll"><m:mi>i</m:mi></m:math> and <m:math overflow="scroll"><m:mi>j</m:mi></m:math> are the array
+coordinates;
+</item>
+          <item id="uid39">Transpose the array;
+</item>
+          <item id="uid40">Compute <m:math overflow="scroll"><m:msub><m:mi>n</m:mi><m:mn>2</m:mn></m:msub></m:math> FFTs of length <m:math overflow="scroll"><m:msub><m:mi>n</m:mi><m:mn>1</m:mn></m:msub></m:math> along the columns of the array.
+</item>
+        </list>
+        <para id="id292340">For this out-of-place implementation, steps 2 and 3 are performed as part of step 1. Step 1 reads data from the input array and computes the FFTs, but before storing the data in the final pass, it is multiplied by the twiddle factors from step 2. After this, the data is stored to <emphasis effect="italics">rows</emphasis> in the output array, and thus the transpose of step 3 is performed implicitly. Step 4 is then computed as usual: FFTs are computed along the columns of the output array.</para>
+        <para id="id292352">This method of computing the four-step algorithm in two steps requires only minor modifications in order to support multiple vector lengths: with <m:math overflow="scroll"><m:mrow><m:mi>V</m:mi><m:mi>L</m:mi><m:mo>&gt;</m:mo><m:mn>1</m:mn></m:mrow></m:math>, multiple columns are read and computed in parallel without modification of the code, but before storing multiple columns of data to rows, a register transpose is required.</para>
+      </section>
+      <section id="uid41">
+        <title>Vector length 1</title>
+        <para id="id292384">When <m:math overflow="scroll"><m:mrow><m:mi>V</m:mi><m:mi>L</m:mi><m:mo>=</m:mo><m:mn>1</m:mn></m:mrow></m:math>, three hard-coded FFTs are elaborated.</para>
+        <list id="id292405" display="block" list-type="enumerated">
+          <item id="uid42">FFT of length <m:math overflow="scroll"><m:msub><m:mi>n</m:mi><m:mn>2</m:mn></m:msub></m:math> with stride <m:math overflow="scroll"><m:mrow><m:msub><m:mi>n</m:mi><m:mn>1</m:mn></m:msub><m:mo>×</m:mo><m:mn>2</m:mn></m:mrow></m:math> for the first column of step 1;
+</item>
+          <item id="uid43">FFT of length <m:math overflow="scroll"><m:msub><m:mi>n</m:mi><m:mn>2</m:mn></m:msub></m:math> with stride <m:math overflow="scroll"><m:mrow><m:msub><m:mi>n</m:mi><m:mn>1</m:mn></m:msub><m:mo>×</m:mo><m:mn>2</m:mn></m:mrow></m:math> and twiddle multiplications on outputs – for all other columns of step 1;
+</item>
+          <item id="uid44">FFT of length <m:math overflow="scroll"><m:msub><m:mi>n</m:mi><m:mn>1</m:mn></m:msub></m:math> with stride <m:math overflow="scroll"><m:mrow><m:msub><m:mi>n</m:mi><m:mn>2</m:mn></m:msub><m:mo>×</m:mo><m:mn>2</m:mn></m:mrow></m:math> for columns in step 4.
+</item>
+        </list>
+        <para id="id292548">In order to generate the code for the four-step sub-transforms,
+some minor modifications are made to the fully hard-coded code generator that was presented in the previous section.</para>
+        <para id="id292553">The first FFT is used to handle the first column of step 1, where there are no twiddle factor multiplications because one of the array coordinates for step 2 is zero, and thus <m:math overflow="scroll"><m:msubsup><m:mi>ω</m:mi><m:mi>N</m:mi><m:mn>0</m:mn></m:msubsup></m:math> is unity. This FFT may be elaborated as in <link target-id="uid4">"Vector length 1"</link> with the addition of a stride factor for the input address calculation.
+The second FFT is elaborated as per the first FFT, but with the addition of twiddle factor multiplications on
+each register prior to the store operations.
+The third FFT is elaborated as per the first FFT, but with strided input <emphasis effect="italics">and</emphasis> output addresses.</para>
+        <code id="uid45" display="block" class="listing">const SFFT_D __attribute__ ((aligned(32))) *LUT;
+const SFFT_D *pLUT;
+void sfft_dcf64_fs_x1_0(sfft_plan_t *p, const void *vin, void *vout){
+  const SFFT_D *in = vin;
+  SFFT_D *out = vout;
+  SFFT_R r0,r1,r2,r3,r4,r5,r6,r7;
+  L_4(in+0,in+64,in+32,in+96,&amp;r0,&amp;r1,&amp;r2,&amp;r3);
+  L_2(in+16,in+80,in+112,in+48,&amp;r4,&amp;r5,&amp;r6,&amp;r7);
+  K_0(&amp;r0,&amp;r2,&amp;r4,&amp;r6);
+  S_4(r0,r2,r4,r6,out+0,out+4,out+8,out+12);
+  K_N(VLIT2(0.7071,0.7071),VLIT2(0.7071,-0.7071),&amp;r1,&amp;r3,&amp;r5,&amp;r7);
+  S_4(r1,r3,r5,r7,out+2,out+6,out+10,out+14);
+}
+void sfft_dcf64_fs_x1_n(sfft_plan_t *p, const void *vin, void *vout){
+  const SFFT_D *in = vin;
+  SFFT_D *out = vout;
+  SFFT_R r0,r1,r2,r3,r4,r5,r6,r7;
+  L_4(in+0,in+64,in+32,in+96,&amp;r0,&amp;r1,&amp;r2,&amp;r3);
+  L_2(in+16,in+80,in+112,in+48,&amp;r4,&amp;r5,&amp;r6,&amp;r7);
+  K_0(&amp;r0,&amp;r2,&amp;r4,&amp;r6);
+  r2 = MUL(r2,LOAD(pLUT+4),LOAD(pLUT+6));
+  r4 = MUL(r4,LOAD(pLUT+12),LOAD(pLUT+14));
+  r6 = MUL(r6,LOAD(pLUT+20),LOAD(pLUT+22));
+  S_4(r0,r2,r4,r6,out+0,out+4,out+8,out+12);
+  K_N(VLIT2(0.7071,0.7071),VLIT2(0.7071,-0.7071),&amp;r1,&amp;r3,&amp;r5,&amp;r7);
+  r1 = MUL(r1,LOAD(pLUT+0),LOAD(pLUT+2));
+  r3 = MUL(r3,LOAD(pLUT+8),LOAD(pLUT+10));
+  r5 = MUL(r5,LOAD(pLUT+16),LOAD(pLUT+18));
+  r7 = MUL(r7,LOAD(pLUT+24),LOAD(pLUT+26));
+  S_4(r1,r3,r5,r7,out+2,out+6,out+10,out+14);
+  pLUT += 28;
+}
+void sfft_dcf64_fs_x2(sfft_plan_t *p, const void *vin, void *vout){
+  const SFFT_D *in = vin;
+  SFFT_D *out = vout;
+  SFFT_R r0,r1,r2,r3,r4,r5,r6,r7;
+  L_4(in+0,in+64,in+32,in+96,&amp;r0,&amp;r1,&amp;r2,&amp;r3);
+  L_2(in+16,in+80,in+112,in+48,&amp;r4,&amp;r5,&amp;r6,&amp;r7);
+  K_0(&amp;r0,&amp;r2,&amp;r4,&amp;r6);
+  S_4(r0,r2,r4,r6,out+0,out+32,out+64,out+96);
+  K_N(VLIT2(0.7071,0.7071),VLIT2(0.7071,-0.7071),&amp;r1,&amp;r3,&amp;r5,&amp;r7);
+  S_4(r1,r3,r5,r7,out+16,out+48,out+80,out+112);
+}
+void sfft_dcf64_fs(sfft_plan_t *p, const void *vin, void *vout) {
+  const SFFT_D *in = vin;
+  SFFT_D *out = vout;
+  pLUT =  LUT;
+  int i;
+  sfft_dcf64_fs_x1_0(p, in, out);
+  for(i=1;i&lt;8;i++) sfft_dcf64_fs_x1_n(p, in+(i*2), out+(i*16));
+  for(i=0;i&lt;8;i++) sfft_dcf64_fs_x2(p, out+(i*2), out+(i*2));
+}
+<caption>Hard-coded four-step VL-1 size-64 FFT</caption></code>
+        <section id="uid46">
+          <title>Example</title>
+          <para id="id293041"><link target-id="uid45"/> is a VL-1 size-64 hard-coded four-step FFT. Before it can be used,
+an initialization procedure (not shown) allocates and populates the LUT at line 1 with the twiddle factors that are required for the step 2 multiplications. Line 44 shows the main function that executes the first sub-transform on the first column (line 49), and the second sub-transform on all remaining columns (line 50). Finally, the sub-transforms corresponding to step 4 of the four-step algorithm are executed on all columns in line 51.</para>
+          <para id="id293052">The twiddle factor multiplication that corresponds to step 2 of the four-step algorithm takes place in lines 21-23 and lines 26-29. The first register is not multiplied with a twiddle factor because the first row of twiddle factors are <m:math overflow="scroll"><m:msubsup><m:mi>ω</m:mi><m:mi>N</m:mi><m:mn>0</m:mn></m:msubsup></m:math> (i.e., unity). The other registers are multiplied with two registers loaded from the LUT, which are the unpacked real and imaginary parts (see <link document="m43793" target-id="uid24">Fast interleaved complex multiplication</link> for details about unpacked complex multiplication).</para></section>
+      </section>
+      <section id="uid47">
+        <title>Other vector lengths</title>
+        <code id="uid48" display="block" class="listing">const SFFT_D __attribute__ ((aligned(32))) *LUT;
+const SFFT_D *pLUT;
+void sfft_fcf64_fs_x1(sfft_plan_t *p, const void *vin, void *vout) {
+  const SFFT_D *in = vin;
+  SFFT_D *out = vout;
+  SFFT_R r0,r1,r2,r3,r4,r5,r6,r7;
+  L_4(in+0,in+64,in+32,in+96,&amp;r0,&amp;r1,&amp;r2,&amp;r3);
+  L_2(in+16,in+80,in+112,in+48,&amp;r4,&amp;r5,&amp;r6,&amp;r7);
+  K_0(&amp;r0,&amp;r2,&amp;r4,&amp;r6);
+  K_N(VLIT4(0.7071,0.7071,0.7071,0.7071),
+      VLIT4(0.7071,-0.7071,0.7071,-0.7071),&amp;r1,&amp;r3,&amp;r5,&amp;r7);
+  r1 = MUL(r1,LOAD(pLUT+0),LOAD(pLUT+4));
+  TX2(r0,r1);
+  r2 = MUL(r2,LOAD(pLUT+8),LOAD(pLUT+12));
+  r3 = MUL(r3,LOAD(pLUT+16),LOAD(pLUT+20));
+  TX2(r2,r3);
+  r4 = MUL(r4,LOAD(pLUT+24),LOAD(pLUT+28));
+  r5 = MUL(r5,LOAD(pLUT+32),LOAD(pLUT+36));
+  TX2(r4,r5);
+  r6 = MUL(r6,LOAD(pLUT+40),LOAD(pLUT+44));
+  r7 = MUL(r7,LOAD(pLUT+48),LOAD(pLUT+52));
+  TX2(r6,r7);
+  S_4(r0,r2,r4,r6,out+0,out+4,out+8,out+12);
+  S_4(r1,r3,r5,r7,out+16,out+20,out+24,out+28);
+  pLUT += 56;
+}
+void sfft_fcf64_fs_x2(sfft_plan_t *p, const void *vin, void *vout) {
+  const SFFT_D *in = vin;
+  SFFT_D *out = vout;
+  SFFT_R r0,r1,r2,r3,r4,r5,r6,r7;
+  L_4(in+0,in+64,in+32,in+96,&amp;r0,&amp;r1,&amp;r2,&amp;r3);
+  L_2(in+16,in+80,in+112,in+48,&amp;r4,&amp;r5,&amp;r6,&amp;r7);
+  K_0(&amp;r0,&amp;r2,&amp;r4,&amp;r6);
+  K_N(VLIT4(0.7071,0.7071,0.7071,0.7071),
+      VLIT4(0.7071,-0.7071,0.7071,-0.7071),&amp;r1,&amp;r3,&amp;r5,&amp;r7);
+  S_4(r0,r2,r4,r6,out+0,out+32,out+64,out+96);
+  S_4(r1,r3,r5,r7,out+16,out+48,out+80,out+112);
+}
+void sfft_fcf64_fs(sfft_plan_t *p, const void *vin, void *vout) {
+  const SFFT_D *in = vin;
+  SFFT_D *out = vout;
+  pLUT =  LUT;
+  int i;
+  for(i=0;i&lt;4;i++) sfft_fcf64_fs_x1(p, in+(i*4), out+(i*32));
+  for(i=0;i&lt;4;i++) sfft_fcf64_fs_x2(p, out+(i*4), out+(i*4));
+}
+<caption>Hard-coded four-step VL-2 size-64 FFT</caption></code>
+        <para id="id288758">For <m:math overflow="scroll"><m:mrow><m:mi>V</m:mi><m:mi>L</m:mi><m:mo>&gt;</m:mo><m:mn>1</m:mn></m:mrow></m:math>, the FFTs along the columns are computed in parallel. Thus, in step 1, <m:math overflow="scroll"><m:mrow><m:msub><m:mi>n</m:mi><m:mn>1</m:mn></m:msub><m:mo>/</m:mo><m:mi>V</m:mi><m:mi>L</m:mi></m:mrow></m:math> FFTs are
+computed along the columns of the array with stride <m:math overflow="scroll"><m:mrow><m:mo>=</m:mo><m:mn>2</m:mn><m:mo>×</m:mo><m:mi>V</m:mi><m:mi>L</m:mi></m:mrow></m:math>, and in step 4, <m:math overflow="scroll"><m:mrow><m:msub><m:mi>n</m:mi><m:mn>2</m:mn></m:msub><m:mo>/</m:mo><m:mi>V</m:mi><m:mi>L</m:mi></m:mrow></m:math> FFTs are computed
+along the columns with stride <m:math overflow="scroll"><m:mrow><m:mo>=</m:mo><m:mn>2</m:mn><m:mo>×</m:mo><m:mi>V</m:mi><m:mi>L</m:mi></m:mrow></m:math>.</para>
+        <para id="id288854">An implication of computing the first column in parallel with other columns is that the first column is now multiplied
+by unity twiddle factors, and thus only two sub-transforms are used instead of three.</para>
+        <para id="id288859">The only other difference when <m:math overflow="scroll"><m:mrow><m:mi>V</m:mi><m:mi>L</m:mi><m:mo>&gt;</m:mo><m:mn>1</m:mn></m:mrow></m:math> is that the registers need to be transposed before storing columns to rows (the implicit transpose that corresponds to step 3). To accomplish this when generating code, <m:math overflow="scroll"><m:mrow><m:mi>n</m:mi><m:mo>=</m:mo><m:mi>V</m:mi><m:mi>L</m:mi></m:mrow></m:math> store operations are latched before the transpose and store code is emitted.</para>
+        <section id="uid49">
+          <title>Example</title>
+          <para id="id288906"><link target-id="uid48"/> implements a VL-2 size-64 hard-coded four-step FFT. The main function (line 39) computes 8 FFTs along the columns for step 1 at line 44, and 8 FFTs along the columns for step 4 at line 45. There are only 4 iterations of the loop in each case because two sub-transforms are computed in parallel with each invocation of the sub-transform function.</para>
+          <para id="id288915">In the function corresponding to the sub-transforms of step 1 (line 3), two store operations are latched (lines 23 and 24) before emitting code, which includes the preceding transposes (the <code display="inline">TX2</code> operations) and twiddle factor multiplications (lines 13–22).</para>
+        </section>
+      </section>
+      <section id="uid50"><title>Performance</title><figure id="uid51" orient="horizontal">
+          <subfigure id="uid52">
+            <media id="uid52_media" alt="">
+              <image mime-type="image/png" src="../../media/fourstep_sse_single.png" id="uid52_onlinemedia" width="250"><!-- NOTE: attribute width changes image size online (pixels). original width is 250. --></image>
+              <image mime-type="application/postscript" for="pdf" src="../../media/fourstep_sse_single.eps" id="uid52_printmedia" print-width="0.65">
+                <!--NOTE: attribute width changes image size in printed PDF (if specified in .tex file)-->
+              </image>
+            </media>
+            <caption>Single-precision, SSE (VL-2)</caption>
+          </subfigure>
+          <subfigure id="uid53">
+            <media id="uid53_media" alt="">
+              <image mime-type="image/png" src="../../media/fourstep_sse_double.png" id="uid53_onlinemedia" width="250"><!-- NOTE: attribute width changes image size online (pixels). original width is 250. --></image>
+              <image mime-type="application/postscript" for="pdf" src="../../media/fourstep_sse_double.eps" id="uid53_printmedia" print-width="0.65">
+                <!--NOTE: attribute width changes image size in printed PDF (if specified in .tex file)-->
+              </image>
+            </media>
+            <caption>Double-precision, SSE (VL-1)</caption>
+          </subfigure>
+          <subfigure id="uid54">
+            <media id="uid54_media" alt="">
+              <image mime-type="image/png" src="../../media/fourstep_avx_single.png" id="uid54_onlinemedia" width="250"><!-- NOTE: attribute width changes image size online (pixels). original width is 250. --></image>
+              <image mime-type="application/postscript" for="pdf" src="../../media/fourstep_avx_single.eps" id="uid54_printmedia" print-width="0.65">
+                <!--NOTE: attribute width changes image size in printed PDF (if specified in .tex file)-->
+              </image>
+            </media>
+            <caption>Single-precision, AVX (VL-4)</caption>
+          </subfigure>
+          <subfigure id="uid55">
+            <media id="uid55_media" alt="">
+              <image mime-type="image/png" src="../../media/fourstep_avx_double.png" id="uid55_onlinemedia" width="250"><!-- NOTE: attribute width changes image size online (pixels). original width is 250. --></image>
+              <image mime-type="application/postscript" for="pdf" src="../../media/fourstep_avx_double.eps" id="uid55_printmedia" print-width="0.65">
+                <!--NOTE: attribute width changes image size in printed PDF (if specified in .tex file)-->
+              </image>
+            </media>
+            <caption>Double-precision, AVX (VL-2)</caption>
+          </subfigure>
+          <caption>Performance of hard-coded four-step FFTs on a Macbook Air 4,2.</caption>
+        </figure>
+        <para id="id293535"><link target-id="uid51"/> shows the results of a benchmark for transforms of size 16 through to 8192 running on a Macbook Air 4,2. The speed of FFTW 3.3 running in estimate and patient modes is also shown for contrast.</para>
+        <para id="id293545">The results show that the performance of the four-step algorithm improves as the length of the vector increases, but, as was the case with the hard-coded FFTs in <link target-id="cid1">"Fully hard-coded"</link>, the performance of the hard-coded four-step FFTs is limited to a certain range of transform size.</para>
+      </section></section>
+    <section id="cid3">
+      <title>Hard-coded leaves</title>
+      <para id="id293565">The performance of the fully hard-coded transforms presented in <link target-id="cid1">"Fully hard-coded"</link> only scales while <m:math overflow="scroll"><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mi>V</m:mi><m:mi>L</m:mi><m:mo>≤</m:mo><m:mn>128</m:mn></m:mrow></m:math>. This section presents techniques that are similar to those found in the fully hard-coded transforms, but applied at another level of scale in order to scale performance to larger sizes.</para>
+      <section id="uid56">
+        <title>Vector length 1</title>
+        <para id="id293605">The fully hard-coded transforms in <link target-id="cid1">"Fully hard-coded"</link> used two primitives at the leaves: a size-4 sub-transform (<code display="inline">L_4</code>) and a double size-2 sub-transform (<code display="inline">L_2</code>). These sub-transforms loaded four elements of data from the input array, performed a small amount of computation, and stored the four results to the output array.</para>
+        <para id="id293626">Performance is scaled to larger transforms by using larger sub-transforms at the leaves of the computation. These are automatically generated using fully hard-coded transforms, and thus the size of the leaf computations is easily parametrized, which is just as well, because the optimal leaf size is dependent on the size of the transform, the compiler, and the target machine.</para>
+        <para id="id293632">The process of elaborating a topological ordering of nodes representing a hard-coded leaf transform of size <m:math overflow="scroll"><m:mi>N</m:mi></m:math> with leaf sub-transforms of size <m:math overflow="scroll"><m:msub><m:mi>N</m:mi><m:mrow><m:mi>l</m:mi><m:mi>e</m:mi><m:mi>a</m:mi><m:mi>f</m:mi></m:mrow></m:msub></m:math> is as follows:</para>
+        <list id="id293667" display="block" list-type="enumerated">
+          <item id="uid57">Elaborate a size <m:math overflow="scroll"><m:msub><m:mi>N</m:mi><m:mrow><m:mi>l</m:mi><m:mi>e</m:mi><m:mi>a</m:mi><m:mi>f</m:mi></m:mrow></m:msub></m:math> sub-transform;
+</item>
+          <item id="uid58">Elaborate a two size <m:math overflow="scroll"><m:mrow><m:msub><m:mi>N</m:mi><m:mrow><m:mi>l</m:mi><m:mi>e</m:mi><m:mi>a</m:mi><m:mi>f</m:mi></m:mrow></m:msub><m:mo>/</m:mo><m:mn>2</m:mn></m:mrow></m:math> sub-transforms as one sub-transform;
+</item>
+          <item id="uid59">Elaborate the main transform using the sub-transforms from steps 1 and 2 as the leaves of the computation.
+</item>
+        </list>
+        <para id="id293758">The node lists for steps 1 and 2 are elaborated using the fully hard-coded <code display="inline">elaborate</code> function from <link target-id="uid10"/>, but because the leaf sub-transform in step 2 is actually two sub-transforms of size <m:math overflow="scroll"><m:mrow><m:msub><m:mi>N</m:mi><m:mrow><m:mi>l</m:mi><m:mi>e</m:mi><m:mi>a</m:mi><m:mi>f</m:mi></m:mrow></m:msub><m:mo>/</m:mo><m:mn>2</m:mn></m:mrow></m:math>, the <code display="inline">elaborate</code>
+function is invoked twice with different offset parameters:</para>
+        <list id="id293806" display="block" list-type="enumerated">
+          <item id="uid60">elaborate(<m:math overflow="scroll"><m:mrow><m:msub><m:mi>N</m:mi><m:mrow><m:mi>l</m:mi><m:mi>e</m:mi><m:mi>a</m:mi><m:mi>f</m:mi></m:mrow></m:msub><m:mo>/</m:mo><m:mn>2</m:mn></m:mrow></m:math>, 0, 0, 1)
+;
+</item>
+          <item id="uid61">elaborate(<m:math overflow="scroll"><m:mrow><m:msub><m:mi>N</m:mi><m:mrow><m:mi>l</m:mi><m:mi>e</m:mi><m:mi>a</m:mi><m:mi>f</m:mi></m:mrow></m:msub><m:mo>/</m:mo><m:mn>2</m:mn></m:mrow></m:math>, <m:math overflow="scroll"><m:mrow><m:mo>-</m:mo><m:mn>1</m:mn></m:mrow></m:math>, <m:math overflow="scroll"><m:mrow><m:msub><m:mi>N</m:mi><m:mrow><m:mi>l</m:mi><m:mi>e</m:mi><m:mi>a</m:mi><m:mi>f</m:mi></m:mrow></m:msub><m:mo>/</m:mo><m:mn>2</m:mn></m:mrow></m:math>, 1)
+;
+</item>
+        </list>
+        <para id="id293935">The code corresponding to steps 1 and 2 is emitted slightly differently than was the case with the fully hard-coded transforms. Instead of hard coding the input array indices,
+the indices are themselves loaded from an array that is precomputed when the transform is initialized.</para>
+        <para id="id293941">The node list corresponding to the main transform in step 3 is elaborated as in the function in <link target-id="uid10"/>, but
+with some minor change. First, the recursion terminates with leaf nodes of size <m:math overflow="scroll"><m:msub><m:mi>N</m:mi><m:mrow><m:mi>l</m:mi><m:mi>e</m:mi><m:mi>a</m:mi><m:mi>f</m:mi></m:mrow></m:msub></m:math>. Second, because
+the loops in the body of the sub-transform will be at least <m:math overflow="scroll"><m:mrow><m:mn>2</m:mn><m:mo>×</m:mo><m:msub><m:mi>N</m:mi><m:mrow><m:mi>l</m:mi><m:mi>e</m:mi><m:mi>a</m:mi><m:mi>f</m:mi></m:mrow></m:msub></m:mrow></m:math> iterations, the loop for the body sub-transforms (line 12 of <link target-id="uid10"/>) is not statically unrolled. Instead only one node is added
+to the list of nodes, and the loop is computed dynamically.</para>
+        <code id="uid62" display="block" class="listing">void sfft_dcf64_hcl16_4_e(offset_t *is,const SFFT_D *in,SFFT_D *out){
+  SFFT_R r0,r1,r2,r3,r4,r5,r6,r7,r8,r9,r10,r11,r12,r13,r14,r15;
+  L_4(in+is[0],in+is[1],in+is[2],in+is[3],&amp;r0,&amp;r1,&amp;r2,&amp;r3);
+  L_2(in+is[4],in+is[5],in+is[6],in+is[7],&amp;r4,&amp;r5,&amp;r6,&amp;r7);
+  K_0(&amp;r0,&amp;r2,&amp;r4,&amp;r6);
+  K_N(VLIT2(0.7071,0.7071),VLIT2(0.7071,-0.7071),&amp;r1,&amp;r3,&amp;r5,&amp;r7);
+  L_4(in+is[8],in+is[9],in+is[10],in+is[11],&amp;r8,&amp;r9,&amp;r10,&amp;r11);
+  L_4(in+is[12],in+is[13],in+is[14],in+is[15],&amp;r12,&amp;r13,&amp;r14,&amp;r15);
+  K_0(&amp;r0,&amp;r4,&amp;r8,&amp;r12);
+  S_4(r0,r4,r8,r12,out+0,out+8,out+16,out+24);
+  K_N(VLIT2(0.9239,0.9239),VLIT2(0.3827,-0.3827),&amp;r1,&amp;r5,&amp;r9,&amp;r13);
+  S_4(r1,r5,r9,r13,out+2,out+10,out+18,out+26);
+  K_N(VLIT2(0.7071,0.7071),VLIT2(0.7071,-0.7071),&amp;r2,&amp;r6,&amp;r10,&amp;r14);
+  S_4(r2,r6,r10,r14,out+4,out+12,out+20,out+28);
+  K_N(VLIT2(0.3827,0.3827),VLIT2(0.9239,-0.9239),&amp;r3,&amp;r7,&amp;r11,&amp;r15);
+  S_4(r3,r7,r11,r15,out+6,out+14,out+22,out+30);
+}
+void sfft_dcf64_hcl16_4_o(offset_t *is,const SFFT_D *in,SFFT_D *out){
+  SFFT_R r0,r1,r2,r3,r4,r5,r6,r7,r8,r9,r10,r11,r12,r13,r14,r15;
+  L_4(in+is[0],in+is[1],in+is[2],in+is[3],&amp;r0,&amp;r1,&amp;r2,&amp;r3);
+  L_2(in+is[4],in+is[5],in+is[6],in+is[7],&amp;r4,&amp;r5,&amp;r6,&amp;r7);
+  K_0(&amp;r0,&amp;r2,&amp;r4,&amp;r6);
+  S_4(r0,r2,r4,r6,out+0,out+4,out+8,out+12);
+  K_N(VLIT2(0.7071,0.7071),VLIT2(0.7071,-0.7071),&amp;r1,&amp;r3,&amp;r5,&amp;r7);
+  S_4(r1,r3,r5,r7,out+2,out+6,out+10,out+14);
+  L_4(in+is[8],in+is[9],in+is[10],in+is[11],&amp;r8,&amp;r9,&amp;r10,&amp;r11);
+  L_2(in+is[12],in+is[13],in+is[14],in+is[15],&amp;r12,&amp;r13,&amp;r14,&amp;r15);
+  K_0(&amp;r8,&amp;r10,&amp;r12,&amp;r14);
+  S_4(r8,r10,r12,r14,out+16,out+20,out+24,out+28);
+  K_N(VLIT2(0.7071,0.7071),VLIT2(0.7071,-0.7071),&amp;r9,&amp;r11,&amp;r13,&amp;r15);
+  S_4(r9,r11,r13,r15,out+18,out+22,out+26,out+30);
+}
+void sfft_dcf64_hcl16_4_X_4(SFFT_D *data, int N, SFFT_D *LUT){
+  X_4(data, N, LUT);
+}
+void sfft_dcf64_hcl16_4(sfft_plan_t *p, const void *vin, void *vout){
+  const SFFT_D *in = vin;
+  SFFT_D *out = vout;
+  p-&gt;is = p-&gt;is_base;
+  sfft_dcf64_hcl16_4_e(p-&gt;is,in,out+0);
+  p-&gt;is += 16;  sfft_dcf64_hcl16_4_o(p-&gt;is,in,out+32);
+  sfft_dcf64_hcl16_4_X_4(out+0,32,p-&gt;ws[0]);
+  p-&gt;is += 16;  sfft_dcf64_hcl16_4_e(p-&gt;is,in,out+64);
+  p-&gt;is += 16;  sfft_dcf64_hcl16_4_e(p-&gt;is,in,out+96);
+  sfft_dcf64_hcl16_4_X_4(out+0,64,p-&gt;ws[1]);
+}
+<caption>Hard-coded VL-1 size-64 FFT with size-16 leaves</caption></code>
+        <section id="uid63">
+          <title>Example</title>
+          <para id="id294468"><link target-id="uid62"/> is a size-64 hard-coded leaf transform with size-16 leaves. The first function (lines 1–17) is a size-16 leaf sub-transform, while the second (lines 18–32) consists of two size-8 leaf sub-transforms in parallel. The main function (lines 36–46) invokes four leaf sub-transforms (lines 40, 41, 43 and 44), and two loops of body sub-transforms (lines 42 and 45).</para>
+          <para id="id294481">The first parameter to the leaf functions (see lines 1 and 18) is a pointer into an array of precomputed indices for the input data array. At lines 41 and 43–44, the array is incremented before subsequent calls to the leaf functions, and at line 39 the pointer is reset to the base of the array so that the transform can be used repeatedly.</para>
+          <para id="id294490">The function used for the body sub-transforms (lines 33–35) is a wrapper for a primitive that computes a radix-2/4 butterfly. The last parameter to this function is a pointer to a precomputed LUT of twiddle factors for a sub-transform of size <m:math overflow="scroll"><m:mi>N</m:mi></m:math> (the second parameter).</para>
+        </section>
+      </section>
+      <section id="uid64">
+        <title>Improving memory locality in the leaves</title>
+        <table id="uid65" summary="">
+          <tgroup cols="2">
+            <tbody>
+              <row>
+                <entry>Size</entry>
+                <entry>Input array addresses</entry>
+              </row>
+              <row>
+                <entry>16</entry>
+                <entry>{0, 64, 32, 96, 16, 80, 112, 48, 8, 72, 40, 104, 120, 56, 24, 88}</entry>
+              </row>
+              <row>
+                <entry>8(x2)</entry>
+                <entry>{4, 68, 36, 100, 20, 84, 116, 52, 124, 60, 28, 92, 12, 76, 108, 44}</entry>
+              </row>
+              <row>
+                <entry>16</entry>
+                <entry>{2, 66, 34, 98, 18, 82, 114, 50, 10, 74, 42, 106, 122, 58, 26, 90}</entry>
+              </row>
+              <row>
+                <entry>16</entry>
+                <entry>{126, 62, 30, 94, 14, 78, 110, 46, 6, 70, 38, 102, 118, 54, 22, 86}</entry>
+              </row>
+              <row>
+                <entry>16</entry>
+                <entry>{1, 65, 33, 97, 17, 81, 113, 49, 9, 73, 41, 105, 121, 57, 25, 89}</entry>
+              </row>
+              <row>
+                <entry>8(x2)</entry>
+                <entry>{5, 69, 37, 101, 21, 85, 117, 53, 125, 61, 29, 93, 13, 77, 109, 45}</entry>
+              </row>
+              <row>
+                <entry>16</entry>
+                <entry>{127, 63, 31, 95, 15, 79, 111, 47, 7, 71, 39, 103, 119, 55, 23, 87}</entry>
+              </row>
+              <row>
+                <entry>8(x2)</entry>
+                <entry>{3, 67, 35, 99, 19, 83, 115, 51, 123, 59, 27, 91, 11, 75, 107, 43}</entry>
+              </row>
+            </tbody>
+          </tgroup>
+          <caption>Size-16 leaf nodes in VL-1 size-128 hard-coded leaf FFT</caption>
+        </table>
+        <para id="id294651"><link target-id="uid65"/> lists the addresses of data loaded by each of the size-16 leaf nodes in a size-128 transform. It is difficult to improve the locality of accesses within a leaf sub-transform (doing so would require the use of expensive transposes), but the order of the leaf sub-transforms can be changed to yield better locality between sub-transforms.</para>
+        <table id="uid66" summary="">
+          <tgroup cols="2">
+            <tbody>
+              <row>
+                <entry>Size</entry>
+                <entry>Input array addresses</entry>
+              </row>
+              <row>
+                <entry>16</entry>
+                <entry>{0, 64, 32, 96, 16, 80, 112, 48, 8, 72, 40, 104, 120, 56, 24, 88}</entry>
+              </row>
+              <row>
+                <entry>16</entry>
+                <entry>{1, 65, 33, 97, 17, 81, 113, 49, 9, 73, 41, 105, 121, 57, 25, 89}</entry>
+              </row>
+              <row>
+                <entry>16</entry>
+                <entry>{2, 66, 34, 98, 18, 82, 114, 50, 10, 74, 42, 106, 122, 58, 26, 90}</entry>
+              </row>
+              <row>
+                <entry>8(x2)</entry>
+                <entry>{3, 67, 35, 99, 19, 83, 115, 51, 123, 59, 27, 91, 11, 75, 107, 43}</entry>
+              </row>
+              <row>
+                <entry>8(x2)</entry>
+                <entry>{4, 68, 36, 100, 20, 84, 116, 52, 124, 60, 28, 92, 12, 76, 108, 44}</entry>
+              </row>
+              <row>
+                <entry>8(x2)</entry>
+                <entry>{5, 69, 37, 101, 21, 85, 117, 53, 125, 61, 29, 93, 13, 77, 109, 45}</entry>
+              </row>
+              <row>
+                <entry>16</entry>
+                <entry>{126, 62, 30, 94, 14, 78, 110, 46, 6, 70, 38, 102, 118, 54, 22, 86}</entry>
+              </row>
+              <row>
+                <entry>16</entry>
+                <entry>{127, 63, 31, 95, 15, 79, 111, 47, 7, 71, 39, 103, 119, 55, 23, 87}</entry>
+              </row>
+            </tbody>
+          </tgroup>
+          <caption>Sorted size-16 leaf nodes in VL-1 size-128 hard-coded leaf FFT</caption>
+        </table>
+        <para id="id294795"><link target-id="uid66"/> is the list of nodes from <link target-id="uid65"/> after the rows
+have been sorted according to the minimum address in each row. There are now three distinct groups in the list: the first three sub-transforms of size-16, the second three sub-transforms of 2x size-8, and the final two sub-transforms of size-16. The memory accesses are now linear between consecutive sub-transforms, though the second and third groups operate on a permuted ordering of the addresses.</para>
+        <para id="id294812">The pattern exhibited by <link target-id="uid66"/> can be exploited to access the data stored in the input array with better locality, as Figures <link target-id="uid67"/> and <link target-id="uid68"/> show. <link target-id="uid67"/> depicts the memory access pattern of an FFT with size-16 hard-coded leaves, while <link target-id="uid68"/> depicts the same FFT with <emphasis effect="italics">sorted</emphasis> hard-coded leaves.</para>
+        <para id="id294846">To compute the FFT with sorted leaves, the leaf sub-transforms and the body sub-transforms are split into two separate lists, and the entire list of leaf sub-transforms is computed before any of the body sub-transforms. There is, however, a cost associated with this re-arrangement: each leaf sub-transform's offset into the output array is not easy to compute because the offsets are now essentially decimated-in-frequency, and thus they are now pre-computed. Overall, the trade-off is justified because the output memory accesses within each leaf sub-transform are still linear.</para>
+        <figure id="uid67">
+          <media id="uid67_media" alt="">
+            <image mime-type="image/png" src="../../media/hardleaf.png" id="uid67_onlineimage" width="460"><!-- NOTE: attribute width changes image size online (pixels). original width is 460. --></image>
+            <image mime-type="application/postscript" for="pdf" src="../../media/hardleaf.eps" id="uid67_printimage"/>
+          </media>
+          <caption>Memory access pattern of the straight line blocks of code in a VL-1 size-128 hard-coded leaf FFT</caption>
+        </figure>
+        <figure id="uid68">
+          <media id="uid68_media" alt="">
+            <image mime-type="image/png" src="../../media/sortedhardleaf.png" id="uid68_onlineimage" width="460"><!-- NOTE: attribute width changes image size online (pixels). original width is 460. --></image>
+            <image mime-type="application/postscript" for="pdf" src="../../media/sortedhardleaf.eps" id="uid68_printimage"/>
+          </media>
+          <caption>Memory access pattern of the straight line blocks of code in a VL-1 size-128 hard-coded leaf FFT after leaf node sorting</caption>
+        </figure>
+        <para id="id294880">The leaf transforms can be computed in three loops. The first and third loops compute size-<m:math overflow="scroll"><m:msub><m:mi>N</m:mi><m:mrow><m:mi>l</m:mi><m:mi>e</m:mi><m:mi>a</m:mi><m:mi>f</m:mi></m:mrow></m:msub></m:math> sub-transforms, while the second loop computes size-<m:math overflow="scroll"><m:mrow><m:msub><m:mi>N</m:mi><m:mrow><m:mi>l</m:mi><m:mi>e</m:mi><m:mi>a</m:mi><m:mi>f</m:mi></m:mrow></m:msub><m:mo>/</m:mo><m:mn>2</m:mn></m:mrow></m:math> sub-transforms. The size of the three loops <m:math overflow="scroll"><m:msub><m:mi>i</m:mi><m:mn>0</m:mn></m:msub></m:math>, <m:math overflow="scroll"><m:msub><m:mi>i</m:mi><m:mn>1</m:mn></m:msub></m:math> and <m:math overflow="scroll"><m:msub><m:mi>i</m:mi><m:mn>2</m:mn></m:msub></m:math> are:</para>
+        <equation id="uid69">
+          <m:math overflow="scroll" mode="display">
+            <m:mtable>
+              <m:mtr>
+                <m:mtd columnalign="left">
+                  <m:mrow>
+                    <m:msub>
+                      <m:mi>i</m:mi>
+                      <m:mn>0</m:mn>
+                    </m:msub>
+                    <m:mo>=</m:mo>
+                    <m:mfenced separators="" open="⌊" close="⌋">
+                      <m:mfrac>
+                        <m:mi>N</m:mi>
+                        <m:mrow>
+                          <m:mn>3</m:mn>
+                          <m:mo>×</m:mo>
+                          <m:msub>
+                            <m:mi>N</m:mi>
+                            <m:mrow>
+                              <m:mi>l</m:mi>
+                              <m:mi>e</m:mi>
+                              <m:mi>a</m:mi>
+                              <m:mi>f</m:mi>
+                            </m:mrow>
+                          </m:msub>
+                        </m:mrow>
+                      </m:mfrac>
+                    </m:mfenced>
+                    <m:mo>+</m:mo>
+                    <m:mn>1</m:mn>
+                  </m:mrow>
+                </m:mtd>
+              </m:mtr>
+            </m:mtable>
+          </m:math>
+        </equation>
+        <equation id="uid70">
+          <m:math overflow="scroll" mode="display">
+            <m:mrow>
+              <m:msub>
+                <m:mi>i</m:mi>
+                <m:mn>1</m:mn>
+              </m:msub>
+              <m:mo>=</m:mo>
+              <m:mfenced separators="" open="⌊" close="⌋">
+                <m:mfrac>
+                  <m:mi>N</m:mi>
+                  <m:mrow>
+                    <m:mn>3</m:mn>
+                    <m:mo>×</m:mo>
+                    <m:msub>
+                      <m:mi>N</m:mi>
+                      <m:mrow>
+                        <m:mi>l</m:mi>
+                        <m:mi>e</m:mi>
+                        <m:mi>a</m:mi>
+                        <m:mi>f</m:mi>
+                      </m:mrow>
+                    </m:msub>
+                  </m:mrow>
+                </m:mfrac>
+              </m:mfenced>
+              <m:mo>+</m:mo>
+              <m:mfenced separators="" open="⌊" close="⌋">
+                <m:mfenced separators="" open="(" close=")">
+                  <m:mfrac>
+                    <m:mi>N</m:mi>
+                    <m:msub>
+                      <m:mi>N</m:mi>
+                      <m:mrow>
+                        <m:mi>l</m:mi>
+                        <m:mi>e</m:mi>
+                        <m:mi>a</m:mi>
+                        <m:mi>f</m:mi>
+                      </m:mrow>
+                    </m:msub>
+                  </m:mfrac>
+                  <m:mspace width="3.33333pt"/>
+                  <m:mo form="prefix">mod</m:mo>
+                  <m:mspace width="0.277778em"/>
+                  <m:mn>3</m:mn>
+                </m:mfenced>
+                <m:mo>×</m:mo>
+                <m:mfrac>
+                  <m:mn>1</m:mn>
+                  <m:mn>2</m:mn>
+                </m:mfrac>
+              </m:mfenced>
+            </m:mrow>
+          </m:math>
+        </equation>
+        <para id="id295163">and</para>
+        <equation id="uid71">
+          <m:math overflow="scroll" mode="display">
+            <m:mrow>
+              <m:msub>
+                <m:mi>i</m:mi>
+                <m:mn>2</m:mn>
+              </m:msub>
+              <m:mo>=</m:mo>
+              <m:mfenced separators="" open="⌊" close="⌋">
+                <m:mfrac>
+                  <m:mi>N</m:mi>
+                  <m:mrow>
+                    <m:mn>3</m:mn>
+                    <m:mo>×</m:mo>
+                    <m:msub>
+                      <m:mi>N</m:mi>
+                      <m:mrow>
+                        <m:mi>l</m:mi>
+                        <m:mi>e</m:mi>
+                        <m:mi>a</m:mi>
+                        <m:mi>f</m:mi>
+                      </m:mrow>
+                    </m:msub>
+                  </m:mrow>
+                </m:mfrac>
+              </m:mfenced>
+            </m:mrow>
+          </m:math>
+        </equation>
+        <para id="id295233">The transform can now be elaborated <emphasis effect="italics">without</emphasis> leaf nodes, and the code for the three loops emitted in the place of calls to individual leaf sub-transforms.</para>
+        <section id="uid72">
+          <title>Example</title>
+          <para id="id295251"><link target-id="uid73"/> is the main function for the FFT that corresponds to the leaf node list in <link target-id="uid66"/>. The first and third loops invoke size-16 sub-transforms at lines 8 and 16, and the second loop invokes 2x size-8 sub-transforms at line 12. Following the leaf sub-transforms, the body sub-transforms are called at lines 19-23.</para>
+          <code id="uid73" display="block" class="listing">void sfft_dcf128_shl16_4(sfft_plan_t *p,const void *vin,void *vout){
+  const SFFT_D *in = vin;
+  SFFT_D *out = vout;
+  offset_t *is = p-&gt;is_base;
+  offset_t *offsets = p-&gt;offsets_base;
+  int i;
+  for(i=3;i&gt;0;--i) {
+    sfft_dcf128_shl16_4_e(is, in, out+offsets[0]);
+    is += 16; offsets += 1;
+  }
+  for(i=3;i&gt;0;--i) {
+    sfft_dcf128_shl16_4_o(is, in, out+offsets[0]);
+    is += 16; offsets += 1;
+  }
+  for(i=2;i&gt;0;--i) {
+    sfft_dcf128_shl16_4_e(is, in, out+offsets[0]);
+    is += 16; offsets += 1;
+  }
+  sfft_dcf128_shl16_4_X_4(out+0, 32, p-&gt;ws[0]);
+  sfft_dcf128_shl16_4_X_4(out+0, 64, p-&gt;ws[1]);
+  sfft_dcf128_shl16_4_X_4(out+128, 32, p-&gt;ws[0]);
+  sfft_dcf128_shl16_4_X_4(out+192, 32, p-&gt;ws[0]);
+  sfft_dcf128_shl16_4_X_4(out+0, 128, p-&gt;ws[2]);
+}
+<caption>Hard-coded VL-1 size-128 FFT with size-16 leaves (sub-transforms omitted)</caption></code>
+        </section>
+        <section id="uid74">
+          <title>Scalability</title>
+          <para id="id295533">In terms of code size, computing the leaf sub-transforms with three loops is economical. As the size of the transform grows, the code size attributed to the leaf sub-transforms remains constant. However, as the size of the transform begins to grow large (e.g., <m:math overflow="scroll"><m:mrow><m:mo>≥</m:mo><m:mn>65</m:mn><m:mo>,</m:mo><m:mn>536</m:mn></m:mrow></m:math>), the instructions required for the body sub-transform calls (lines 19-23 in <link target-id="uid73"/>) begins to dominate the overall program size. <link target-id="uid78">"Optimizing the hierarchical structure"</link> describes a method for compressing the code size of the body sub-transform calls while maintaining performance.</para>
+          <para id="id295566">Because the input array references between consecutive leaves are now linear, and like types of leaf sub-transforms are grouped together, it is now possible to compute several leaf sub-transforms in parallel, which is fully described in <link target-id="uid86">"Other vector lengths"</link>.</para>
+        </section>
+      </section>
+      <section id="uid75">
+        <title>Body sub-transform radix</title>
+        <para id="id295586">The radix of the body sub-transforms can be increased in order to reduce the number of passes over the data and make better use of the cache. In practice, the body sub-transform radix is limited by the associativity of the cache as the size of the transform increases. If the radix is greater than the associativity of the nearest level of cache in which a sub-transform cannot fit, there will be cache misses for every iteration of the sub-transform's loop, resulting in severely degraded performance.</para>
+        <para id="id295593">All Intel SIMD microprocessors since the Netburst micro-architecture have had at least 8-way associativity in all levels of cache, and thus increasing the radix from 4 to 8 is a sensible decision when targeting Intel machines.</para>
+        <para id="id295598">Just as the split-radix 2/4 algorithm requires two different types of leaf sub-transforms, a split-radix 2/8 algorithm would require three, which increases the complexity of statically elaborating and generating code. There is an alternative that does not require implementing three types of leaf sub-transform: where a size-<m:math overflow="scroll"><m:mi>N</m:mi></m:math> body sub-transform divides into a size <m:math overflow="scroll"><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>2</m:mn></m:mrow></m:math> body sub-transform and two size <m:math overflow="scroll"><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn></m:mrow></m:math> sub-transforms, the size <m:math overflow="scroll"><m:mi>N</m:mi></m:math> and size <m:math overflow="scroll"><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>2</m:mn></m:mrow></m:math> sub-transforms may be collected together and computed as a size-8 sub-transform. Thus the transform is computed with two types of leaf sub-transform and two types of body sub-transform, instead of three types of leaf sub-transform and one type of body sub-transform, as with the standard split-radix 2/8 algorithm.</para>
+        <para id="id295668">For the size-128 tranform in <link target-id="uid73"/>, either the sub-transform at line 19 can be subsumed into the sub-transform at line 20, or the sub-transform at line 20 can be subsumed into the sub-transform at line 23 – but not both. The latter choice is better because it involves larger transforms.</para>
+        <code id="uid76" display="block" class="listing">CBody *CHardCodedLeaf::find_subsumable_sub_transform(
+       vector&lt;CNode *&gt;::reverse_iterator i) {
+  CBody *first = (CBody *)(*i);  i++;
+  while(i != bs.rend()) {
+    if(!((*i)-&gt;type().compare("body"))) {
+      CBody *second = (CBody *)(*i);
+      if(first-&gt;N == second-&gt;N*2 &amp;&amp; first-&gt;offset == second-&gt;offset){
+        bs.erase((++i).base());
+        return second;
+      }
+    }
+    ++i;
+  }
+  return NULL;
+}
+void CHardCodedLeaf::increase_body_radix(void) {
+  vector&lt;CNode *&gt;::reverse_iterator ri;
+  for(ri=bs.rbegin(); ri!=bs.rend(); ++ri) {
+    if(!((*ri)-&gt;type().compare("body"))) {
+      CBody *n1 = (CBody *)(*ri);
+      CBody *n2 = find_subsumable_sub_transform(ri);
+      if(n2) n1-&gt;size *= 2;
+    }
+  }
+}
+<caption>Doubling the radix of body sub-transforms</caption></code>
+        <para id="id295935">The code in <link target-id="uid76"/> iterates in reverse over a list of sub-transforms and doubles the radix of the body sub-transforms. Because the list may include multiple types, type introspection at lines 6 and 20 filters out all types that are not body sub-transforms. For each body sub-transform, the <code display="inline">increase_body_radix</code> function searches upwards through the list for a subsumable body sub-transform (using <code display="inline">find_subsumable_sub_transform</code>) and if a match is found, the smaller sub-transform is removed from the list, and the size of the larger sub-transform is doubled.</para>
+        <figure id="uid77">
+          <media id="uid77_media" alt="">
+            <image mime-type="image/png" src="../../media/sortedhardleaf128-8.png" id="uid77_onlineimage" width="322"><!-- NOTE: attribute width changes image size online (pixels). original width is 322. --></image>
+            <image mime-type="application/postscript" for="pdf" src="../../media/sortedhardleaf128-8.eps" id="uid77_printimage"/>
+          </media>
+          <caption>Memory access pattern of the straight line blocks of code in a VL-1 size-128 hard-coded leaf FFT with sorted radix-2/4 and size-8 body sub-transforms</caption>
+        </figure>
+        <para id="id295971"><link target-id="uid77"/> depicts the memory access patterns of a size-128 transform where the outermost body sub-transform has subsumed a smaller sub-transform to become a size-8 sub-transform. The columns from 33 onwards show the sub-transform accessing eight elements in the output data array (cf. <link target-id="uid68"/>, which shows the memory access patterns of the same transform
+prior to doubling the radix of the outer sub-transform).</para>
+      </section>
+      <section id="uid78">
+        <title>Optimizing the hierarchical structure</title>
+        <para id="id295997">The largest transform that has been considered so far is size-128. As it stands, the hard-coded leaf approach begins to
+generate code of unwieldy proportions as the size of the transform tends towards tens of thousands or hundreds of thousands of points. This is due to the lists of statically elaborated body sub-transform calls, e.g., a size-262,144 transform contains a lengthy list of 7279 such calls.</para>
+        <para id="id296004">While long lists of statically elaborated calls are one extreme, the other is to compute the body sub-transforms with a recursive program. The former option degrades performance for larger transforms, while the latter option curbs performance for smaller transforms. A compromise is to somehow compress blocks of statically elaborated sub-transform calls.</para>
+        <para id="id296010">The approach presented here extracts the hierarchical structure from the sequence of body sub-transforms and emits a set of functions that are neither too small (as in the case of a recursive program) nor too large (as is the case with full static elaboration). This is accomplished by adapting the Sequitur algorithm <link target-id="bid2"/>, which builds a grammar of rules from a sequence of symbols, and enforces two basic constraints:</para>
+        <list id="id296025" display="block" list-type="enumerated">
+          <item id="uid79">no pair of adjacent symbols (referred to as a digram) appears more than once in the grammar;
+</item>
+          <item id="uid80">every rule is used more than once.
+</item>
+        </list>
+        <para id="id296055">The resulting grammar is an efficient hierarchical representation of the original sequence. Additional constraints can be imposed to limit the maximum or minimum size of each rule, which enable the size of the resulting functions to be tuned to be not too small and not too large.</para>
+        <para id="id296060">To build the grammar, each body sub-transform is represented by a symbol consisting of the size and offset of the sub-transform. The radix is discarded, because it can be inferred from the size. Here are several other details relevant to this particular application of Sequitur:</para>
+        <list id="id296066" display="block" list-type="bulleted">
+          <item id="uid81">A digram of two sub-transforms is deemed to match another digram when the size of each sub-transform matches the size of the other digram's respective sub-transform <emphasis effect="italics">and</emphasis> the relative offsets between sub-transforms within each digram match;
+</item>
+          <item id="uid82">Sub-transform offsets are maintained to be always relative to the base of the containing rule – when a rule is constructed, the offsets of the symbols within that rule are adjusted to be relative to the base of the new rule, and when a rule is subsumed (due to violation of constraint 2: every rule must be used more than once), the offsets are recomputed to be relative to the subsuming rule.
+</item>
+        </list>
+        <code id="uid83" display="block" class="listing">void sfft_dcf8192_shl16_8_4(sfft_plan_t *p, SFFT_D *out) {
+  X_4(out+0, 32, p-&gt;ws[0]);
+  X_4(out+128, 32, p-&gt;ws[0]);
+  X_4(out+192, 32, p-&gt;ws[0]);
+  X_8(out+0, 128, p-&gt;ws[2]);
+}
+void sfft_dcf8192_shl16_8_5(sfft_plan_t *p, SFFT_D *out) {
+  X_8(out+0, 64, p-&gt;ws[1]);
+  X_8(out+128, 64, p-&gt;ws[1]);
+}
+void sfft_dcf8192_shl16_8_9(sfft_plan_t *p, SFFT_D *out) {
+  X_8(out+0, 64, p-&gt;ws[1]);
+  X_4(out+128, 32, p-&gt;ws[0]);
+  X_4(out+192, 32, p-&gt;ws[0]);
+  sfft_dcf8192_shl16_8_5(p, out+256);
+  X_8(out+0, 256, p-&gt;ws[3]);
+}
+void sfft_dcf8192_shl16_8_13(sfft_plan_t *p, SFFT_D *out) {
+  sfft_dcf8192_shl16_8_4(p, out+0);
+  sfft_dcf8192_shl16_8_5(p, out+256);
+  sfft_dcf8192_shl16_8_4(p, out+512);
+  sfft_dcf8192_shl16_8_4(p, out+768);
+  X_8(out+0, 512, p-&gt;ws[4]);
+}
+void sfft_dcf8192_shl16_8_14(sfft_plan_t *p, SFFT_D *out) {
+  sfft_dcf8192_shl16_8_9(p, out+0);
+  sfft_dcf8192_shl16_8_9(p, out+512);
+}
+void sfft_dcf8192_shl16_8_18(sfft_plan_t *p, SFFT_D *out) {
+  sfft_dcf8192_shl16_8_9(p, out+0);
+  sfft_dcf8192_shl16_8_4(p, out+512);
+  sfft_dcf8192_shl16_8_4(p, out+768);
+  sfft_dcf8192_shl16_8_14(p, out+1024);
+  X_8(out+0, 1024, p-&gt;ws[5]);
+}
+void sfft_dcf8192_shl16_8_22(sfft_plan_t *p, SFFT_D *out) {
+  sfft_dcf8192_shl16_8_13(p, out+0);
+  sfft_dcf8192_shl16_8_14(p, out+1024);
+  sfft_dcf8192_shl16_8_13(p, out+2048);
+  sfft_dcf8192_shl16_8_13(p, out+3072);
+  X_8(out+0, 2048, p-&gt;ws[6]);
+}
+void sfft_dcf8192_shl16_8_1(sfft_plan_t *p, SFFT_D *out) {
+  sfft_dcf8192_shl16_8_22(p, out+0);
+  sfft_dcf8192_shl16_8_18(p, out+4096);
+  sfft_dcf8192_shl16_8_18(p, out+6144);
+  sfft_dcf8192_shl16_8_22(p, out+8192);
+  sfft_dcf8192_shl16_8_22(p, out+12288);
+  X_8(out+0, 8192, p-&gt;ws[8]);
+}
+<caption>Optimized body sub-transforms for size-8192 FFT</caption></code>
+        <section id="uid84">
+          <title>Example</title>
+          <para id="id296630">A size-8192 hard-coded leaf FFT requires 229 calls to radix-2/4 and size-8 body sub-transforms. After optimizing the sequence of calls with Sequitur, the compact set of functions shown in <link target-id="uid83"/> replaces a sequence of 229 calls.</para>
+          <para id="id296640">Compared to the full list of statically elaborated calls, the optimized set of functions requires less code space while achieving better performance; and compared to a recursive program, the optimized set of function calls is faster (due to lower call and stack overhead) while trading off an acceptably small amount of code space.</para>
+        </section>
+        <section id="uid85">
+          <title>Scalability</title>
+          <para id="id296656">The technique presented in this section has been verified for transforms ranging in size from <m:math overflow="scroll"><m:msup><m:mn>2</m:mn><m:mn>6</m:mn></m:msup></m:math> through to <m:math overflow="scroll"><m:msup><m:mn>2</m:mn><m:mn>25</m:mn></m:msup></m:math> (32 mega) points. The technique works well up until sizes of about <m:math overflow="scroll"><m:msup><m:mn>2</m:mn><m:mn>18</m:mn></m:msup></m:math> points, but for larger transforms the elaboration and compile times begin to exceed 1 second or so, and the code size again begins to grow large. For transforms larger than <m:math overflow="scroll"><m:msup><m:mn>2</m:mn><m:mn>18</m:mn></m:msup></m:math> points, a recursive program can be used until leaves of size <m:math overflow="scroll"><m:msup><m:mn>2</m:mn><m:mn>18</m:mn></m:msup></m:math> points are reached, at which point the technique presented in this section is used.</para>
+        </section>
+      </section>
+      <section id="uid86">
+        <title>Other vector lengths</title>
+        <para id="id296744">The method of vectorizing the hard-coded leaf FFT is similar to that of the hard-coded FFT in <link target-id="uid16">"Other vector lengths"</link>; the only difference here is the level of scale.</para>
+        <para id="id296753">The hard-coded FFT was vectorized by collecting together primitive leaf operations that loaded data from adjacent memory locations. The hard-coded leaf FFT has already been sorted such that consecutive leaf sub-transforms load data from adjacent memory locations (see <link target-id="uid64">"Improving memory locality in the leaves"</link>), so the task is easier in this case – at least in one respect.</para>
+        <table id="uid87" summary="">
+          <tgroup cols="2">
+            <tbody>
+              <row>
+                <entry>Size</entry>
+                <entry>Input array addresses</entry>
+              </row>
+              <row>
+                <entry>16</entry>
+                <entry>{0, 64, 32, 96, 16, 80, 112, 48, 8, 72, 40, 104, 120, 56, 24, 88}</entry>
+              </row>
+              <row>
+                <entry>16</entry>
+                <entry>{1, 65, 33, 97, 17, 81, 113, 49, 9, 73, 41, 105, 121, 57, 25, 89}</entry>
+              </row>
+              <row>
+                <entry>16</entry>
+                <entry>{2, 66, 34, 98, 18, 82, 114, 50, 10, 74, 42, 106, 122, 58, 26, 90}</entry>
+              </row>
+              <row>
+                <entry>8(x2)</entry>
+                <entry>{3, 67, 35, 99, 19, 83, 115, 51, 123, 59, 27, 91, 11, 75, 107, 43}</entry>
+              </row>
+              <row>
+                <entry>8(x2)</entry>
+                <entry>{4, 68, 36, 100, 20, 84, 116, 52, 124, 60, 28, 92, 12, 76, 108, 44}</entry>
+              </row>
+              <row>
+                <entry>8(x2)</entry>
+                <entry>{5, 69, 37, 101, 21, 85, 117, 53, 125, 61, 29, 93, 13, 77, 109, 45}</entry>
+              </row>
+              <row>
+                <entry>16</entry>
+                <entry>{126, 62, 30, 94, 14, 78, 110, 46, 6, 70, 38, 102, 118, 54, 22, 86}</entry>
+              </row>
+              <row>
+                <entry>16</entry>
+                <entry>{127, 63, 31, 95, 15, 79, 111, 47, 7, 71, 39, 103, 119, 55, 23, 87}</entry>
+              </row>
+            </tbody>
+          </tgroup>
+          <caption>Sorted size-16 leaf nodes in size-128 hard-coded leaf FFT, grouped for VL-2</caption>
+        </table>
+        <para id="id296905"><link target-id="uid87"/> shows the sorted size-16 leaf sub-transforms for a size-128 transform with
+the rows divided into VL-2 groups. Because each group of two leaf sub-transforms loads data from adjacent memory locations, the group of sub-transforms can be loaded in parallel with vector memory operations, and all (or some) of the computation done in parallel. The first, third and fourth groups in <link target-id="uid87"/> contain leaf nodes of the same size/type; these are the easiest vector leaf sub-transforms to compute, as described in <link target-id="uid88">"Homogeneous leaf sub-transform vectors"</link>. The second group of rows contains leaf sub-transforms of differing size/type, and computing these sub-transforms is covered separately in <link target-id="uid90">"Heterogeneous leaf sub-transform vectors"</link>.</para>
+        <section id="uid88">
+          <title>Homogeneous leaf sub-transform vectors</title>
+          <code id="uid89" display="block" class="listing">void
+sfft_fcf128_shl16_8_ee(offset_t *is,const SFFT_D *in,SFFT_D *out){
+  SFFT_R r0,r1,r2,r3,r4,r5,r6,r7,r8,r9,r10,r11,r12,r13,r14,r15;
+  L_4(in+is[0],in+is[1],in+is[2],in+is[3],&amp;r0,&amp;r1,&amp;r2,&amp;r3);
+  L_2(in+is[4],in+is[5],in+is[6],in+is[7],&amp;r4,&amp;r5,&amp;r6,&amp;r7);
+  K_0(&amp;r0,&amp;r2,&amp;r4,&amp;r6);
+  K_N(VLIT4(0.7071,0.7071,0.7071,0.7071),
+      VLIT4(0.7071,-0.7071,0.7071,-0.7071),
+      &amp;r1,&amp;r3,&amp;r5,&amp;r7);
+  L_4(in+is[8],in+is[9],in+is[10],in+is[11],&amp;r8,&amp;r9,&amp;r10,&amp;r11);
+  L_4(in+is[12],in+is[13],in+is[14],in+is[15],&amp;r12,&amp;r13,&amp;r14,&amp;r15);
+  K_0(&amp;r0,&amp;r4,&amp;r8,&amp;r12);
+  K_N(VLIT4(0.9239,0.9239,0.9239,0.9239),
+      VLIT4(0.3827,-0.3827,0.3827,-0.3827),
+      &amp;r1,&amp;r5,&amp;r9,&amp;r13);
+  TX2(&amp;r0,&amp;r1); TX2(&amp;r4,&amp;r5); TX2(&amp;r8,&amp;r9); TX2(&amp;r12,&amp;r13);
+  S_4(r0,r4,r8,r12,out0+0,out0+8,out0+16,out0+24);
+  S_4(r1,r5,r9,r13,out1+0,out1+8,out1+16,out1+24);
+  K_N(VLIT4(0.7071,0.7071,0.7071,0.7071),
+      VLIT4(0.7071,-0.7071,0.7071,-0.7071),
+      &amp;r2,&amp;r6,&amp;r10,&amp;r14);
+  K_N(VLIT4(0.3827,0.3827,0.3827,0.3827),
+      VLIT4(0.9239,-0.9239,0.9239,-0.9239),
+      &amp;r3,&amp;r7,&amp;r11,&amp;r15);
+  TX2(&amp;r2,&amp;r3); TX2(&amp;r6,&amp;r7); TX2(&amp;r10,&amp;r11); TX2(&amp;r14,&amp;r15);
+  S_4(r2,r6,r10,r14,out0+4,out0+12,out0+20,out0+28);
+  S_4(r3,r7,r11,r15,out1+4,out1+12,out1+20,out1+28);
+}
+<caption>Homogeneous size-16 leaf sub-transform for VL-2 size-128 hard-coded leaf FFT</caption></code>
+          <para id="id297201">The vector leaf sub-transforms of a single size/type are handled in the same way as a VL-1 sub-transform, with one difference: the vector registers must be transposed before the data is stored to memory in the output array. In the example shown in <link target-id="uid89"/>, the transposes take place at lines 16 and 25.</para>
+          <para id="id297211">Prior to the store operations, each position of the vector register (each position being a whole complex word) contains an element belonging to each of the leaf sub-transforms composing the vectorized sub-transform. Because each leaf sub-transform is stored sequentially to different locations in memory with aligned vector store operations, sets of registers are transposed such that each vector register contains elements from only one leaf sub-transform.</para>
+        </section>
+        <section id="uid90">
+          <title>Heterogeneous leaf sub-transform vectors</title>
+          <code id="uid91" display="block" class="listing">void
+sfft_fcf128_shl16_8_eo(offset_t *is,const SFFT_D *in,SFFT_D *out){
+  SFFT_R r0_1,r2_3,r4_5,r6_7,r8_9,r10_11,r12_13,r14_15,
+	r16_17,r18_19,r20_21,r22_23,r24_25,r26_27,r28_29,r30_31;
+  L_4_4(in+is[0],in+is[1],in+is[2],in+is[3],
+      &amp;r0_1,&amp;r2_3,&amp;r16_17,&amp;r18_19);
+  L_2_2(in+is[4],in+is[5],in+is[6],in+is[7],
+      &amp;r4_5,&amp;r6_7,&amp;r20_21,&amp;r22_23);
+  K_N(VLIT4(0.7071,0.7071,1,1),VLIT4(0.7071,-0.7071,0,-0),
+      &amp;r0_1,&amp;r2_3,&amp;r4_5,&amp;r6_7);
+  L_4_2(in+is[8],in+is[9],in+is[10],in+is[11],
+        &amp;r8_9,&amp;r10_11,&amp;r28_29,&amp;r30_31);
+  L_4_4(in+is[12],in+is[13],in+is[14],in+is[15],
+        &amp;r12_13,&amp;r14_15,&amp;r24_25,&amp;r26_27);
+  K_N(VLIT4(0.9239,0.9239,1,1),VLIT4(0.3827,-0.3827,0,-0),
+      &amp;r0_1,&amp;r4_5,&amp;r8_9,&amp;r12_13);
+  S_4(r0_1,r4_5,r8_9,r12_13,out0+0,out0+8,out0+16,out0+24);
+  K_N(VLIT4(0.3827,0.3827,0.7071,0.7071),
+      VLIT4(0.9239,-0.9239,0.7071,-0.7071),
+      &amp;r2_3,&amp;r6_7,&amp;r10_11,&amp;r14_15);
+  S_4(r2_3,r6_7,r10_11,r14_15,out0+4,out0+12,out0+20,out0+28);
+  K_N(VLIT4(0.7071,0.7071,1,1),VLIT4(0.7071,-0.7071,0,-0),
+      &amp;r16_17,&amp;r18_19,&amp;r20_21,&amp;r22_23);
+  S_4(r16_17,r18_19,r20_21,r22_23,out1+0,out1+4,out1+8,out1+12);
+  K_N(VLIT4(0.7071,0.7071,1,1),VLIT4(0.7071,-0.7071,0,-0),
+      &amp;r24_25,&amp;r26_27,&amp;r28_29,&amp;r30_31);
+  S_4(r24_25,r26_27,r28_29,r30_31,out1+16,out1+20,out1+24,out1+28);
+}
+<caption>Heterogeneous size-16 leaf sub-transform for VL-2 size-128 hard-coded leaf FFT</caption></code>
+          <para id="id297491">In the case of a vector comprising heterogeneous leaf sub-transforms, the data is transposed into separate sub-transforms following the primitive leaf operations. The remainder of the computation is carried out separately for each leaf sub-transform in the vector, and no further transposes are required.</para>
+          <para id="id297497">When elaborating and generating code for VL-2 transforms, there are only two heterogeneous leaf sub-transforms that might be required, but for other vector lengths the combinations are more complex. During the elaboration process, each unique combination that is encountered in the sorted list of leaf sub-transforms is elaborated into a function with repeated calls to the <code display="inline">elaborate</code> function, as was done in <link target-id="uid56">"Vector length 1"</link> in order to elaborate a sub-transform composed of two size <m:math overflow="scroll"><m:mrow><m:msub><m:mi>N</m:mi><m:mrow><m:mi>l</m:mi><m:mi>e</m:mi><m:mi>a</m:mi><m:mi>f</m:mi></m:mrow></m:msub><m:mo>/</m:mo><m:mn>2</m:mn></m:mrow></m:math> sub-transforms.</para>
+          <para id="id297542"><link target-id="uid91"/> is an example of a heterogeneous size-16 VL-2 leaf sub-transform, where one size-16 leaf sub-transform is loaded into the lower halves of the vector registers, and the data from another leaf sub-transform composed of two size-8 sub-transforms is loaded into the upper halves. The primitive leaf operations at lines 5, 7, 11 and 13 transpose each sub-transform's data into separate vector registers, and the remainder of the computation is performed on each sub-transform separately. The size-16 sub-transform is stored to sequential locations in memory at lines 17 and 21, while the sub-transform composed of two size-8 leaf sub-transforms is stored to memory at lines 24 and 27.</para>
+        </section>
+      </section>
+      <section id="uid92">
+        <title>Streaming stores</title>
+        <para id="id297564">Some machines support streaming store or non-temporal store instructions; these instructions are used to store data to locations that do not have temporal locality, and thus the cache can be bypassed. The hard-coded leaf FFT described in the previous sections splits the computation into a pass of leaf sub-transforms and several passes of body sub-transforms. For large transforms where the size of the data exceeds the outermost level of cache, the non-temporal store instructions can be used in the leaf sub-transforms to bypass the cache when storing data to the output array; this can greatly improve performance by keeping other data in cache. The Intel SSE and AVX vector extensions both support streaming stores.</para>
+      </section>
+      <section id="uid93"><title>Performance</title><figure id="uid94" orient="horizontal">
+          <subfigure id="uid95">
+            <media id="uid95_media" alt="">
+              <image mime-type="image/png" src="../../media/hardcodedleaf_sse_single.png" id="uid95_onlinemedia" width="250"><!-- NOTE: attribute width changes image size online (pixels). original width is 250. --></image>
+              <image mime-type="application/postscript" for="pdf" src="../../media/hardcodedleaf_sse_single.eps" id="uid95_printmedia" print-width="0.65">
+                <!--NOTE: attribute width changes image size in printed PDF (if specified in .tex file)-->
+              </image>
+            </media>
+            <caption>Single-precision, SSE (VL-2)</caption>
+          </subfigure>
+          <subfigure id="uid96">
+            <media id="uid96_media" alt="">
+              <image mime-type="image/png" src="../../media/hardcodedleaf_sse_double.png" id="uid96_onlinemedia" width="250"><!-- NOTE: attribute width changes image size online (pixels). original width is 250. --></image>
+              <image mime-type="application/postscript" for="pdf" src="../../media/hardcodedleaf_sse_double.eps" id="uid96_printmedia" print-width="0.65">
+                <!--NOTE: attribute width changes image size in printed PDF (if specified in .tex file)-->
+              </image>
+            </media>
+            <caption>Double-precision, SSE (VL-1)</caption>
+          </subfigure>
+          <subfigure id="uid97">
+            <media id="uid97_media" alt="">
+              <image mime-type="image/png" src="../../media/hardcodedleaf_avx_single.png" id="uid97_onlinemedia" width="250"><!-- NOTE: attribute width changes image size online (pixels). original width is 250. --></image>
+              <image mime-type="application/postscript" for="pdf" src="../../media/hardcodedleaf_avx_single.eps" id="uid97_printmedia" print-width="0.65">
+                <!--NOTE: attribute width changes image size in printed PDF (if specified in .tex file)-->
+              </image>
+            </media>
+            <caption>Single-precision, AVX (VL-4)</caption>
+          </subfigure>
+          <subfigure id="uid98">
+            <media id="uid98_media" alt="">
+              <image mime-type="image/png" src="../../media/hardcodedleaf_avx_double.png" id="uid98_onlinemedia" width="250"><!-- NOTE: attribute width changes image size online (pixels). original width is 250. --></image>
+              <image mime-type="application/postscript" for="pdf" src="../../media/hardcodedleaf_avx_double.eps" id="uid98_printmedia" print-width="0.65">
+                <!--NOTE: attribute width changes image size in printed PDF (if specified in .tex file)-->
+              </image>
+            </media>
+            <caption>Double-precision, AVX (VL-2)</caption>
+          </subfigure>
+          <caption>Performance of hard-coded leaf FFTs on a Macbook Air 4,2.</caption>
+        </figure>
+        <para id="id297727"><link target-id="uid94"/> shows the results of a benchmark for transforms of size 256 through to 262,144 running on a Macbook Air 4,2. The speed of FFTW 3.3 running in estimate and patient modes is also shown for comparison.</para>
+        <para id="id297739">For each size of transform, precision and vector length (i.e., either SSE or AVX), several configurations of hard-coded leaf FFT were generated: three configurations of leaf size (16, 32 and 64), and if the transform was larger than 32,768, an additional transform with size-16 leaves and streaming store instructions was also generated. Before running the benchmark, the library was calibrated and the fastest configuration selected (details of the calibration are described in <link target-id="uid102">"Calibration"</link>).</para>
+        <para id="id297750">For most sizes of transform, precision and vector length, SFFT is faster than FFTW running in patient mode. For the transforms with memory requirements that are approximately at the limits of the cache, FFTW running in patient mode is sometimes marginally faster than SFFT. Once the transforms exceed the size of the cache, SFFT is again the fastest.</para>
+        <para id="id297757">It is important to note that FFTW running in patient mode evaluates a huge configuration space of parameters (and thus takes a long time to calibrate), while SFFT has, in this case, only evaluated either three or four configurations per transform.</para>
+      </section></section>
+    <section id="cid4">
+      <title>In practice</title>
+      <para id="id297772">SFFT is not itself an FFT library; the name refers to the elaboration program that reads a configuration file and generates the code for an FFT library. The code for the FFT library is then built as any other library would be.</para>
+      <section id="uid99">
+        <title>Organization</title>
+        <para id="id297786">As well as the generated code, there is infrastructure code which is common to all libraries generated by SFFT. This can be broadly categorized into three parts: initialization, dispatch and calibration.</para>
+        <section id="uid100">
+          <title>Initialization</title>
+          <para id="id297800">Before an application can compute an FFT with SFFT, it must initialize a plan for the specific size, precision and direction of FFT. The library may have several FFTs and configurations that can compute the requested FFT, and it chooses the fastest option by timing each of the candidate configurations, which is at most 8 for any size of transform – a very small space compared to FFTW's exhaustive search of all possible FFT algorithms and configurations. <link document="m43790">Results and discussion</link> describes an alternative to calibration, where machine learning is used with data collected from benchmarks to build a model that predicts performance.</para><para id="id297815">After determining which implementation and parameters will be used, the initialization code allocates memory and populates any lookup tables that may be required. Before returning the plan to the application, a function pointer in the plan is updated to point to the FFT that has just been initialized.</para>
+        </section>
+        <section id="uid101">
+          <title>Dispatch</title>
+          <para id="id297831">Applications do not invoke any of the FFTs within SFFT directly. Rather they invoke a dispatch function on an initialized plan, which in turn transfers control to the correct FFT code within SFFT. The use of a dispatch function is purely a matter of convenience, so that users only need to deal with a few simple functions.</para>
+        </section>
+        <section id="uid102">
+          <title>Calibration</title>
+          <para id="id297847">SFFT contains calibration code to measure the performance of the possible configurations of FFT on the target machine, which is at most 8 for each size of transform. Following calibration, the timing data is written to a file, which is then used by SFFT to select the fastest possible FFT for a given problem running on that machine.</para>
+        </section>
+      </section>
+      <section id="uid103">
+        <title>Usage</title>
+        <para id="id297863">SFFT is used much like other FFT libraries:</para>
+        <list id="id297867" display="block" list-type="enumerated">
+          <item id="uid104">A plan for an FFT is initialized;
+</item>
+          <item id="uid105">Using the plan, an FFT is computed (this step may be repeated many times);
+</item>
+          <item id="uid106">The plan is destroyed.
+</item>
+        </list>
+        <para id="id297908">The plan is initialized for a given size, precision and direction of transform, and may then be executed any number of times on any data. Any number of plans can be simultaneously created and used.</para>
+        <code id="uid107" display="block" class="listing">  int n = 1024;	
+  double complex __attribute__ ((aligned(32))) *input, *output;
+  input = _mm_malloc(n * sizeof(double complex), 32);
+  output = _mm_malloc(n * sizeof(double complex), 32);
+ 
+  for(i=0;i&lt;n;i++) input[i] = i;
+ 
+  sfft_plan_t *p = sfft_init(i, SFFT_FORWARD|SFFT_DOUBLE|SFFT_AVX);
+ 
+  if(p) {
+ 
+    sfft_execute(p, input, output);
+    for(i=0;i&lt;n;i++)
+      printf("%d %f %f\n", i, creal(output[i]), cimag(output[i]));
+    sfft_free(p);
+ 
+  }else{
+    printf("Plan unsupported\n");
+  }
+<caption>SFFT example usage</caption></code>
+        <para id="id298081">In <link target-id="uid107"/>, a size-1024 transform is computed on double-precision data with AVX enabled. In lines 2-4, the input and output arrays are allocated with 32 byte alignment, as is required for aligned AVX memory operations. The plan is initialized at line 8, used to compute an FFT at line 12 (provided the requested plan is supported), and finally freed at line 20.</para>
+      </section>
+      <section id="uid108">
+        <title>Other optimizations</title>
+        <para id="id298102">In addition to generating a general-purpose library that can be calibrated for a machine and application at runtime, there are several situations where the SFFT library can be specially optimized:</para>
+        <list id="id298107" display="block" list-type="enumerated">
+          <item id="uid109">If the machine and application are fixed, a one time calibration can be performed and an optimized library containing only the fastest transforms specific to the application and machine is generated;
+</item>
+          <item id="uid110">If the application is fixed, an optimized library containing only the transforms specific to the application is generated (and the library is calibrated the first time it is used on each machine);
+</item>
+          <item id="uid111">If the machine is fixed, an optimized library containing only the transforms specific to the machine is generated (and an application can use any transform without calibration).
+</item>
+        </list>
+      </section>
+    </section>
+  </content>
+  <bib:file>
+    <bib:entry id="bid1">
+      <bib:inproceedings>
+        <!--required fields-->
+        <bib:author>Bailey, D.H.</bib:author>
+        <bib:title>FFTs in external or hierarchical memory</bib:title>
+        <bib:booktitle>Proceedings of the 1989 ACM/IEEE conference on Supercomputing</bib:booktitle>
+        <bib:year>1989</bib:year>
+        <!--optional fields-->
+        <bib:editor/>
+        <bib:number/>
+        <bib:series/>
+        <bib:pages>234–242</bib:pages>
+        <bib:address/>
+        <bib:month/>
+        <bib:organization>ACM</bib:organization>
+        <bib:publisher/>
+        <bib:note/>
+      </bib:inproceedings>
+    </bib:entry>
+    <bib:entry id="bid0">
+      <bib:article>
+        <!--required fields-->
+        <bib:author>Lorenz, J. and Kral, S. and Franchetti, F. and Ueberhuber, C.W.</bib:author>
+        <bib:title>Vectorization techniques for the Blue Gene/L double FPU</bib:title>
+        <bib:journal>IBM Journal of Research and Development</bib:journal>
+        <bib:year>2005</bib:year>
+        <!--optional fields-->
+        <bib:volume>49</bib:volume>
+        <bib:number>2.3</bib:number>
+        <bib:pages>437–446</bib:pages>
+        <bib:month/>
+        <bib:note/>
+      </bib:article>
+    </bib:entry>
+    <bib:entry id="bid2">
+      <bib:article>
+        <!--required fields-->
+        <bib:author>Nevill-Manning, C.G. and Witten, I.H.</bib:author>
+        <bib:title>Identifying Hierarchical Structure in Sequences: A linear-time algorithm</bib:title>
+        <bib:journal>Journal of Artificial Intelligence Research</bib:journal>
+        <bib:year>1997</bib:year>
+        <!--optional fields-->
+        <bib:volume>7</bib:volume>
+        <bib:number/>
+        <bib:pages>67–82</bib:pages>
+        <bib:month/>
+        <bib:note/>
+      </bib:article>
+    </bib:entry>
+  </bib:file>
+</document>

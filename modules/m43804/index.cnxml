@@ -1,0 +1,247 @@
+<document xmlns="http://cnx.rice.edu/cnxml" xmlns:m="http://www.w3.org/1998/Math/MathML" xmlns:bib="http://bibtexml.sf.net/">
+  <title>Benchmark Methods</title>
+<metadata xmlns:md="http://cnx.rice.edu/mdml">
+  <md:content-id>m43804</md:content-id>
+  <md:title>Benchmark Methods</md:title>
+  <md:abstract/>
+  <md:uuid>14488a50-4f87-4970-87fc-6d3aefc849e7</md:uuid>
+</metadata>
+
+<content>
+    <para id="id62160">This chapter describes the benchmarking methods used to evaluate the performance and accuracy of various FFT implementations throughout this thesis.</para>
+    <para id="id62166">The two architectures of interest are the Intel x86 architecture and the ARM architecture. A comprehensive set of results collected from a wide range of machines implementing these architectures is presented in <link document="m43790">Results and discussion</link>, but throughout the rest of the thesis, benchmarks are performed on an Apple Macbook Air 4,2; a widely available and currently state-of-the-art machine that is equipped with an Intel Core i5-2557M. <link target-id="uid1"/> summarizes the specifications of the machine.</para><para id="id62179">For the x86 benchmarks, an existing framework called <emphasis effect="italics">BenchFFT</emphasis> <link target-id="bid0"/> was used. For the ARM benchmarks, which were performed on iOS devices, there was no existing
+FFT benchmark software, and so an application was written for this purpose, which is described in <link target-id="cid2">"ARM architecture"</link>.</para>
+    <table id="uid1" summary="">
+      <tgroup cols="2">
+        <tbody>
+          <row>
+            <entry/>
+            <entry>Macbook Air 4,2</entry>
+          </row>
+          <row>
+            <entry>CPU</entry>
+            <entry>Dual-core Intel Core i5 (i5-2557M)</entry>
+          </row>
+          <row>
+            <entry>CPU clock</entry>
+            <entry>1.7 GHz (turbo to 2.7GHz with one core)</entry>
+          </row>
+          <row>
+            <entry>L1 cache</entry>
+            <entry>32KB I-cache &amp; 32KB D-cache</entry>
+          </row>
+          <row>
+            <entry>L2 cache</entry>
+            <entry>256KB</entry>
+          </row>
+          <row>
+            <entry>L3 cache</entry>
+            <entry>3MB shared</entry>
+          </row>
+          <row>
+            <entry>Memory</entry>
+            <entry>4 GB of 1333 MHz DDR3 SDRAM</entry>
+          </row>
+          <row>
+            <entry>OS</entry>
+            <entry>OS X 10.7.2</entry>
+          </row>
+          <row>
+            <entry>SIMD extensions</entry>
+            <entry>SSE and AVX</entry>
+          </row>
+        </tbody>
+      </tgroup>
+      <caption>Specifications of the primary test machine</caption>
+    </table>
+    <section id="cid1">
+      <title>x86 architecture</title>
+      <para id="id62666">The x86 benchmarks were performed with BenchFFT, a collection of FFT libraries and benchmarking software assembled by Frigo and Johnson, the authors
+of FFTW <link target-id="bid0"/>. The benchmarks in BenchFFT use timing and calibration code from <code display="inline">lmbench</code>, a performance analysis tool written by
+Larry McVoy and Carl Staelin <link target-id="bid1"/>.</para>
+      <section id="uid2">
+        <title>Timing</title>
+        <para id="id62697">BenchFFT measures the initialization time and runtime of an FFT
+separately. The initialization time is measured only once, and thus outliers
+due to effects from external factors such as OS scheduling are
+occasionally observed. Routines from <code display="inline">lmbench</code> are then used to calibrate
+the minimum number of FFT iterations required for accurate measurement
+using the <code display="inline">gettimeofday</code> function. Finally, the time taken to run the
+minimum number of iterations is measured eight times, from which the minimum
+time divided by the number of iterations is used, in order to factor out
+effects from external factors.</para>
+        <para id="id62716">The minimum time for a transform is then used to determine a scaled inverse time measurement, sometimes known as CTGs. CTG are defined as:</para>
+        <equation id="uid3">
+          <m:math overflow="scroll" mode="display">
+            <m:mrow>
+              <m:mi>C</m:mi>
+              <m:mi>T</m:mi>
+              <m:mi>G</m:mi>
+              <m:mi>s</m:mi>
+              <m:mo>=</m:mo>
+              <m:mfrac>
+                <m:mrow>
+                  <m:mn>5</m:mn>
+                  <m:mi>N</m:mi>
+                  <m:msub>
+                    <m:mo form="prefix">log</m:mo>
+                    <m:mn>2</m:mn>
+                  </m:msub>
+                  <m:mrow>
+                    <m:mo>(</m:mo>
+                    <m:mi>N</m:mi>
+                    <m:mo>)</m:mo>
+                  </m:mrow>
+                </m:mrow>
+                <m:mrow>
+                  <m:msup>
+                    <m:mn>10</m:mn>
+                    <m:mn>9</m:mn>
+                  </m:msup>
+                  <m:mi>t</m:mi>
+                </m:mrow>
+              </m:mfrac>
+            </m:mrow>
+          </m:math>
+        </equation>
+        <para id="id62781">for complex transforms and</para>
+        <equation id="uid4">
+          <m:math overflow="scroll" mode="display">
+            <m:mrow>
+              <m:mi>C</m:mi>
+              <m:mi>T</m:mi>
+              <m:mi>G</m:mi>
+              <m:mi>s</m:mi>
+              <m:mo>=</m:mo>
+              <m:mfrac>
+                <m:mrow>
+                  <m:mn>2</m:mn>
+                  <m:mo>.</m:mo>
+                  <m:mn>5</m:mn>
+                  <m:mi>N</m:mi>
+                  <m:msub>
+                    <m:mo form="prefix">log</m:mo>
+                    <m:mn>2</m:mn>
+                  </m:msub>
+                  <m:mrow>
+                    <m:mo>(</m:mo>
+                    <m:mi>N</m:mi>
+                    <m:mo>)</m:mo>
+                  </m:mrow>
+                </m:mrow>
+                <m:mrow>
+                  <m:msup>
+                    <m:mn>10</m:mn>
+                    <m:mn>9</m:mn>
+                  </m:msup>
+                  <m:mi>t</m:mi>
+                </m:mrow>
+              </m:mfrac>
+            </m:mrow>
+          </m:math>
+        </equation>
+        <para id="id62856">for real transforms, where <m:math overflow="scroll"><m:mi>t</m:mi></m:math> is the time taken to run one transform (in
+seconds). Unless the Cooley-Tukey radix-2 algorithm is used, a measurement
+expressed in CTGs is not an actual FLOP count – it is a rough
+measure of an algorithm's efficiency relative to the radix-2 algorithm and the
+clock speed of the machine.</para>
+        <para id="id62874">When a transform has several variants (such as direction or radix), BenchFFT
+reports the speed of the FFT as being the <emphasis effect="italics">fastest</emphasis> of the possible
+options.</para>
+      </section>
+      <section id="uid5">
+        <title>Accuracy</title>
+        <para id="id62108">To measure the accuracy of a transform, BenchFFT compares an FFT with an
+arbitrary-precision FFT computed on the same inputs, and reports the
+relative RMS error. The inputs are pseudo-random in the range <m:math overflow="scroll"><m:mrow><m:mo>[</m:mo><m:mn>0</m:mn><m:mo>.</m:mo><m:mn>5</m:mn><m:mo>,</m:mo><m:mn>0</m:mn><m:mo>.</m:mo><m:mn>5</m:mn><m:mo>)</m:mo></m:mrow></m:math>
+and the arbitrary-precision FFT has over 40 decimal places of accuracy.</para>
+        <para id="id63104">When a transform has several variants (such as direction or radix), BenchFFT reports the accuracy as being <emphasis effect="italics">worst</emphasis> of the results.</para>
+      </section>
+      <section id="uid6">
+        <title>Compiling</title>
+        <para id="id63123">Except where otherwise noted, ICC version 12.1.0 for OS X was used to
+compile 64-bit code. For OS X builds, the compiler flags used were “-O3”,
+while “-O3 -msse2” (or equivalent) was used for Linux builds. In the cases
+where the FFT uses AVX, the code is compiled with “-xAVX” or
+“-mavx” (depending on compiler).</para>
+        <para id="id63132">Some libraries included in the BenchFFT software have their own compilation
+scripts which override the defaults, and in the case of commercial libraries
+(such as Intel IPP and Apple vDSP), the compiler flags are of little
+consequence because the libraries are distributed in binary form.</para>
+      </section>
+      <section id="uid7">
+        <title>Data format</title>
+        <para id="id63147">FFT libraries use interleaved format and/or complex format to store the
+data. In the case of interleaved format, the real and imaginary parts of
+complex numbers are stored adjacently in memory, while in the case of split
+format, the real and imaginary parts are stored in separate arrays.</para>
+        <para id="id63152">The majority of FFT libraries use interleaved format to store data. In the
+case where the library supports interleaved <emphasis effect="italics">or</emphasis> split format, BenchFFT
+uses interleaved format. However there are a few libraries that only support
+split format, and in theses cases it should be noted the results are not
+strictly comparable (Apple vDSP is one such case).</para>
+      </section>
+    </section>
+    <section id="cid2">
+      <title>ARM architecture</title>
+      <para id="id63173">There was no existing FFT benchmarking software for iOS on ARM devices,
+and so a benchmarking tool was written. The tool runs the benchmarking in a
+thread of normal priority.</para>
+      <section id="uid8">
+        <title>Compiling</title>
+        <para id="id63186">The code was compiled with Apple clang compiler 3.0 for ARMv7 targets running iOS 5.0. The compiler flags
+used were “-O3 -mfpu=neon”.</para>
+      </section>
+      <section id="uid9">
+        <title>Timing</title>
+        <para id="id63201">The Apple A4 and A5 SoCs are built around the ARM Cortex-A8 and Cortex-A9
+cores, which have hardware cycle counters that can be used for precise timing.
+The cycle counter control registers can only be accessed in kernel mode, and so
+the high resolution timer available through the <code display="inline">mach_absolute_time</code>
+function was used instead.</para>
+        <para id="id63212">For a given size of transform, a calibration routine determines the number of
+iterations that must be run such that the total runtime is approximately one
+second. After calibration, each FFT to be evaluated is run for the
+pre-determined number of iterations – this loop is run eight times, and the
+fastest time divided by the number of iterations is taken to be the FFTs
+runtime. By running each FFT for approximately one second, and repeating
+the measurement eight times to find the best time, the effects from external
+factors such as OS scheduling are minimized. As with BenchFFT, the time is
+expressed in CTGs.</para>
+      </section>
+    </section>
+  </content>
+  <bib:file>
+    <bib:entry id="bid0">
+      <bib:misc>
+        <!--required fields-->
+        <!--optional fields-->
+        <bib:author/>
+        <bib:title>BenchFFT, a program to compare the performance and accuracy of many different FFT implementations.</bib:title>
+        <bib:howpublished>URL: http://www.fftw.org/benchfft/</bib:howpublished>
+        <bib:month>November</bib:month>
+        <bib:year>2011</bib:year>
+        <bib:note/>
+      </bib:misc>
+    </bib:entry>
+    <bib:entry id="bid1">
+      <bib:inproceedings>
+        <!--required fields-->
+        <bib:author>McVoy, L. and Staelin, C.</bib:author>
+        <bib:title>lmbench: Portable tools for performance analysis</bib:title>
+        <bib:booktitle>Proceedings of the 1996 annual conference on USENIX Annual Technical Conference</bib:booktitle>
+        <bib:year>1996</bib:year>
+        <!--optional fields-->
+        <bib:editor/>
+        <bib:number/>
+        <bib:series/>
+        <bib:pages>23–23</bib:pages>
+        <bib:address/>
+        <bib:month/>
+        <bib:organization>Usenix Association</bib:organization>
+        <bib:publisher/>
+        <bib:note/>
+      </bib:inproceedings>
+    </bib:entry>
+  </bib:file>
+</document>

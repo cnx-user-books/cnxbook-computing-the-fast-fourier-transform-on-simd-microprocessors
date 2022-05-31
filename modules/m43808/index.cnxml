@@ -1,0 +1,135 @@
+<document xmlns="http://cnx.rice.edu/cnxml">
+  <title>Conclusions and Future Work</title>
+<metadata xmlns:md="http://cnx.rice.edu/mdml">
+  <md:content-id>m43808</md:content-id>
+  <md:title>Conclusions and Future Work</md:title>
+  <md:abstract/>
+  <md:uuid>d3def6cf-1c05-4cdd-8672-5ae2450c045d</md:uuid>
+</metadata>
+
+<content>
+    <para id="id62160">The results presented in this thesis show that vectorization at the
+algorithm level of abstraction produces good performance results, the
+conjugate-pair algorithm is in many cases faster than the ordinary split-radix
+algorithm, and that there are good heuristics for predicting the performance of
+the FFT on SIMD microprocessors (i.e., the need for empirical optimization may
+be overstated).</para>
+    <para id="id62168">This work concludes with a review of the hypotheses, a summary of the
+contributions, some ideas for directions that future work might take, and a few
+final remarks.</para>
+    <section id="cid1">
+      <title>Revisiting the hypotheses</title>
+      <para id="id62181">This section discusses the hypotheses of <link document="m43792">Introduction</link> with
+reference to the experiments in <link document="m43793">Implementation details</link> and <link document="m43791">Streaming FFT</link> and the results in <link document="m43790">Results and discussion</link>.</para><section id="id62195">
+        <title>Hypothesis 1: Accessing memory in sequential “streams” is critical for best performance</title>
+        <para id="id62541">The simple implementation in <link document="m43793" target-id="cid1">Simple programs</link> used a
+LUT to store precomputed coefficients, but for every size of sub-transform
+that composes a particular transform, the LUT is accessed
+non-contiguously, with vector gather operations of varying strides. In
+<link document="m43793" target-id="uid26">Vectorized loops</link>, vector intrinsics and a sequentially
+accessed LUT for each size of sub-transform are shown to improve
+performance. Although the set of LUTs increases the memory footprint, the
+speed improves markedly, by over 30% in many cases.</para><para id="id62555">In <link document="m43791" target-id="uid64">Improving memory locality in the leaves</link>, a DAG representing the computation was
+topologically sorted so that accesses to the input data, which are effectively
+pseudo-random for a decimation-in-time decomposition, are ordered into
+sequential streams. Benchmark results in
+<link document="m43790">Results and discussion</link> show that this technique, in tandem
+with several others, achieves good results, being faster than FFTW in many
+cases.</para><para id="id62568">The results from the above two cases confirm the idea that accessing data in
+sequential streams provides big performance gains, even in the somewhat
+counter-intuitive case where data is duplicated and more memory is required.</para>
+      </section>
+      <section id="id62574">
+        <title>Hypothesis 2: The conjugate-pair algorithm is faster than the ordinary split-radix algorithm</title>
+        <para id="id62581">Hypothesis 2 is based on the idea that memory bandwidth is a bottleneck, and on
+the fact that the conjugate-pair algorithm requires only half the number of
+twiddle factor loads.</para>
+        <para id="id62586">In <link document="m43790">Results and discussion</link>, a highly optimized implementation
+of the conjugate-pair algorithm is benchmarked against an equally highly
+optimized implementation of the ordinary split-radix algorithm. For smaller
+sizes of transform, the ordinary split-radix algorithm is faster, but above a
+certain size (4096 in this case), the conjugate-pair algorithm is faster.</para><para id="id62594">Thus, Hypothesis 2 is confirmed with the proviso that the transform is larger
+than a particular size.</para>
+      </section>
+      <section id="id62600">
+        <title>Hypothesis 3: The performance of an FFT can be predicted
+based on characteristics of the underlying machine and the compiler</title>
+        <para id="id62607">In <link document="m43790">Results and discussion</link>, SFFT and FFTW were benchmarked on sixteen x86
+machines and two ARM NEON machines, and SFFT was found to be as fast as,
+or faster than FFTW, suggesting that the performance of an FFT running on
+a certain machine can be predicted and reasoned about, and that extensive
+machine calibration might not be required.</para><para id="id62615">In <link document="m43790" target-id="cid5">Predicting performance</link>, a model was evaluated with 10-fold
+cross-validation to have 74.8% precision when using characteristics of the
+underlying machine and the compiler to predict performance, further supporting
+the idea that the performance of the FFT on SIMD microprocessors can
+be predicted and reasoned about.</para></section>
+    </section>
+    <section id="cid2">
+      <title>Contributions</title>
+      <para id="id62632">The contributions of this work are summarized as follows:</para>
+      <list id="id62636" display="block" list-type="enumerated"><item id="uid1">Three methods of computing the conjugate-pair algorithm on SIMD
+microprocessors are presented in <link document="m43791">Streaming FFT</link>. The three techniques
+are suited for different sizes of transform, but in general, all techniques
+are amenable to algorithm level vectorization, and latency and memory
+locality optimizations. These techniques are shown to produce results that
+are, in many cases, faster than state of the art libraries such as FFTW and
+SPIRAL, but without extensive machine calibration;
+</item>
+        <item id="uid2">The source code for the library developed in this thesis, SFFT, is
+publicly available under a permissive open source license on <link url="http://github.com/anthonix/sfft" window="new">github</link>. A permissive open source license will
+hopefully ensure that SFFT is developed further.
+</item>
+      </list></section>
+    <section id="cid3">
+      <title>Future work</title>
+      <para id="id62681">This section presents some ideas for future work that can be divided into four categories: measurement, modelling, systems and applications.</para>
+      <section id="uid3">
+        <title>Measurement</title>
+        <para id="id62694">FFTW could be instrumented to collect data on the huge space of transforms it evaluates, which could then be used to build more accurate models.</para>
+        <para id="id62699">The existing FFT benchmarking infrastructure could be improved by
+detecting interruption by other system processes and re-running the affected
+results. Benchmarks could then be run on a much wider range of machines, under
+more controlled conditions, which would increase the accuracy of models built
+from the data.</para>
+      </section>
+      <section id="uid4">
+        <title>Modelling</title>
+        <para id="id62714">It might be possible to build a classifier that predicts whether a transform is
+likely, given some threshold, to be the fastest. The fastest is then selected
+from a subset of those that are likely to be the fastest, and thus the number
+of transforms that must be evaluated during calibration is reduced, while
+sacrificing little or no performance.</para>
+      </section>
+      <section id="uid5">
+        <title>Systems</title>
+        <para id="id62730">SFFT could be extended to multi-dimensional, multi-threaded, real, large
+(megapoint and above) and arbitrary sized transforms. Additionally, support for
+other architectures such as POWER and Cell B.E. could be added. Code could be
+optimized between transforms in a library, which would reduce binary size, but
+there may be other effects.</para>
+      </section>
+      <section id="uid6">
+        <title>Algorithms</title>
+        <para id="id62745">So far, there have been no known attempts to seriously optimize the tangent
+FFT, and the results of optimizing the tangent FFT to the same
+degree as the conjugate-pair FFT in this thesis would be very
+interesting.</para>
+        <para id="id62750">SFFT could be utilized in the sparse FFT algorithms which have recently
+been published, perhaps improving their performance even further.</para>
+      </section>
+      <section id="uid7">
+        <title>Applications</title>
+        <para id="id62764">Applications such as the SETI@home client could be patched to support SFFT. The
+results of benchmarks between SFFT, FFTW and other libraries, when used in real
+world applications such as SETI@home, would be of great interest.</para>
+      </section>
+    </section>
+    <section id="cid4">
+      <title>Final remarks</title>
+      <para id="id62779">This thesis showed that high-performance computation of the FFT is by no
+means a solved problem, and it is hoped that this work will serve as a catalyst
+or foundation for future efforts that push efficiency and performance even
+further.</para>
+    </section>
+  </content>
+</document>

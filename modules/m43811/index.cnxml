@@ -1,0 +1,310 @@
+<document xmlns="http://cnx.rice.edu/cnxml">
+  <title>Appendix 2 - FFTs with precomputed LUTs</title>
+<metadata xmlns:md="http://cnx.rice.edu/mdml">
+  <md:content-id>m43811</md:content-id>
+  <md:title>Appendix 2 - FFTs with precomputed LUTs</md:title>
+  <md:abstract/>
+  <md:uuid>ea07c311-157a-41ee-9f3e-08a9ca344ef9</md:uuid>
+</metadata>
+
+<content>
+    <para id="id101853">This Appendix contains source code listings corresponding to the FFT implementations with precomputed coefficients in <link document="m43793">Implementation details</link>.</para><code id="uid1" display="block" class="listing">#include &lt;math.h&gt;
+#include &lt;complex.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+ 
+typedef complex float data_t;
+ 
+#define W(N,k) (cexp(-2.0f * M_PI * I * (float)k / (float)N))
+ 
+data_t *LUT;
+ 
+void ditfft2(data_t *in, data_t *out, int log2stride, int stride, int N) {
+	if(N == 2) {
+		out[0]   = in[0] + in[stride];
+		out[N/2] = in[0] - in[stride];
+	}else{
+		ditfft2(in, out, log2stride+1, stride &lt;&lt; 1, N &gt;&gt; 1);
+		ditfft2(in+stride, out+N/2, log2stride+1, stride &lt;&lt; 1, N &gt;&gt; 1);
+		
+		{	 /* k=0 -&gt; no multiplication */
+			data_t Ek = out[0];
+			data_t Ok = out[N/2];
+			out[0]   = Ek + Ok;
+			out[N/2] = Ek - Ok;
+		}
+ 
+		int k;
+		for(k=1;k&lt;N/2;k++) {
+			data_t Ek = out[k];
+			data_t Ok = out[(k+N/2)];
+			data_t w = LUT[k&lt;&lt;log2stride];
+			out[k]        = Ek + w * Ok;
+			out[(k+N/2) ] = Ek - w * Ok;
+		}
+	}
+}
+ 
+void fft_init(int N) {
+	LUT = malloc(N/2 * sizeof(data_t));
+	int i;
+	for(i=0;i&lt;N/2;i++) LUT[i] = W(N,i);
+}
+<caption>Simple radix-2 FFT with precomputed LUT</caption></code>
+    <code id="uid2" display="block" class="listing">#include &lt;complex.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+ 
+typedef complex float data_t;
+ 
+#define W(N,k) (cexp(-2.0f * M_PI * I * (float)k / (float)N))
+data_t *LUT1;
+data_t *LUT3;
+ 
+void splitfft(data_t *in, data_t *out, int log2stride, int stride, int N) {
+	if(N == 1) {
+		out[0] = in[0];
+	}else if(N == 2) {
+		out[0]   = in[0] + in[stride];
+		out[N/2] = in[0] - in[stride];
+	}else{
+		splitfft(in, out, log2stride+1, stride &lt;&lt; 1, N &gt;&gt; 1);
+		splitfft(in+stride, out+N/2, log2stride+2, stride &lt;&lt; 2, N &gt;&gt; 2);
+	  splitfft(in+3*stride, out+3*N/4, log2stride+2, stride &lt;&lt; 2, N &gt;&gt; 2);
+		
+		{	
+			data_t Uk  = out[0];
+			data_t Zk  = out[0+N/2];
+			data_t Uk2 = out[0+N/4];
+			data_t Zdk = out[0+3*N/4];
+			out[0]       = Uk  + (Zk + Zdk);
+			out[0+N/2]   = Uk  - (Zk + Zdk);
+			out[0+N/4]   = Uk2 - I*(Zk - Zdk);
+			out[0+3*N/4] = Uk2 + I*(Zk - Zdk);
+		}
+		int k;
+		for(k=1;k&lt;N/4;k++) {
+			data_t Uk  = out[k];
+			data_t Zk  = out[k+N/2];
+			data_t Uk2 = out[k+N/4];
+			data_t Zdk = out[k+3*N/4];
+			data_t w1 = LUT1[k&lt;&lt;log2stride];
+			data_t w3 = LUT3[k&lt;&lt;log2stride];
+			out[k]       = Uk  + (w1*Zk + w3*Zdk);
+			out[k+N/2]   = Uk  - (w1*Zk + w3*Zdk);
+			out[k+N/4]   = Uk2 - I*(w1*Zk - w3*Zdk);
+			out[k+3*N/4] = Uk2 + I*(w1*Zk - w3*Zdk);
+		}
+	}
+}
+ 
+void fft_init(int N) {
+	LUT1 = malloc(N/4 * sizeof(data_t));
+	LUT3 = malloc(N/4 * sizeof(data_t));
+	int i;
+	for(i=0;i&lt;N/4;i++) LUT1[i] = W(N,i);
+	for(i=0;i&lt;N/4;i++) LUT3[i] = W(N,3*i);
+}
+<caption>Simple split-radix FFT with precomputed LUT</caption></code>
+    <code id="uid3" display="block" class="listing">#include &lt;math.h&gt;
+#include &lt;complex.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+ 
+typedef complex float data_t;
+ 
+#define W(N,k) (cexp(-2.0f * M_PI * I * (float)k / (float)N))
+data_t *LUT;
+ 
+void conjfft(data_t *base, int TN,
+	data_t *in, data_t *out, int log2stride, int stride, int N) {
+	if(N == 1) {
+		if(in &lt; base) in += TN;
+		out[0] = in[0];
+	}else if(N == 2) {
+		data_t *i0 = in, *i1 = in + stride;
+		if(i0 &lt; base) i0 += TN;
+		if(i1 &lt; base) i1 += TN;
+		out[0]   = *i0 + *i1;
+		out[N/2] = *i0 - *i1;
+	}else{
+		conjfft(base, TN, in, out, log2stride+1, stride &lt;&lt; 1, N &gt;&gt; 1);
+		conjfft(base, TN, in+stride, out+N/2, log2stride+2, stride &lt;&lt; 2, N &gt;&gt; 2);
+	  conjfft(base, TN, in-stride, out+3*N/4, log2stride+2, stride &lt;&lt; 2, N &gt;&gt; 2);
+		
+		{	
+			data_t Uk  = out[0];
+			data_t Zk  = out[0+N/2];
+			data_t Uk2 = out[0+N/4];
+			data_t Zdk = out[0+3*N/4];
+			out[0]       = Uk  + (Zk + Zdk);
+			out[0+N/2]   = Uk  - (Zk + Zdk);
+			out[0+N/4]   = Uk2 - I*(Zk - Zdk);
+			out[0+3*N/4] = Uk2 + I*(Zk - Zdk);
+		}
+		int k;
+		for(k=1;k&lt;N/4;k++) {
+			data_t Uk  = out[k];
+			data_t Zk  = out[k+N/2];
+			data_t Uk2 = out[k+N/4];
+			data_t Zdk = out[k+3*N/4];
+			data_t w = LUT[k&lt;&lt;log2stride];
+			out[k]       = Uk  + (w*Zk + conj(w)*Zdk);
+			out[k+N/2]   = Uk  - (w*Zk + conj(w)*Zdk);
+			out[k+N/4]   = Uk2 - I*(w*Zk - conj(w)*Zdk);
+			out[k+3*N/4] = Uk2 + I*(w*Zk - conj(w)*Zdk);
+		}
+	}
+}
+	
+void fft_init(int N) {
+	LUT = malloc(N/4 * sizeof(data_t));
+	int i;
+	for(i=0;i&lt;N/4;i++) LUT[i] = W(N,i);
+}
+<caption>Simple conjugate-pair FFT with precomputed LUT</caption></code>
+    <code id="uid4" display="block" class="listing">#include &lt;math.h&gt;
+#include &lt;complex.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+ 
+typedef complex float data_t;
+ 
+#define W(N,k) (cexp(-2.0f * M_PI * I * (float)(k) / (float)(N)))
+ 
+float
+s(int n, int k) {
+  if (n &lt;= 4) return 1.0f;
+ 
+  int k4 = k % (n/4);
+ 
+  if (k4 &lt;= n/8)
+		return (s(n/4,k4) * cosf(2.0f * M_PI * (float)k4 / (float)n));
+  return (s(n/4,k4) * sinf(2.0f * M_PI * (float)k4 / (float)n));
+}
+ 
+data_t *LUT, *LUT0, *LUT1, *LUT2;
+float *s2, *s4;
+ 
+void tangentfft8(data_t *base, int TN, data_t *in, data_t *out, int log2stride, 	
+		int stride, int N) {
+  if(N == 1) {
+		if(in &lt; base) in += TN;
+		out[0] = in[0];
+  }else if(N == 2) {
+		data_t *i0 = in, *i1 = in + stride;
+		if(i0 &lt; base) i0 += TN;
+		if(i1 &lt; base) i1 += TN;
+		out[0]   = *i0 + *i1;
+		out[N/2] = *i0 - *i1;
+  }else if(N == 4) {
+    tangentfft8(base, TN, in, out, log2stride+1, stride &lt;&lt; 1, N &gt;&gt; 1);
+    tangentfft8(base, TN, in+stride, out+2, log2stride+1, stride &lt;&lt; 1, N &gt;&gt; 1);
+ 
+    data_t temp1 = out[0] + out[2];
+    data_t temp2 = out[0] - out[2];
+    out[0] = temp1;
+    out[2] = temp2;
+    temp1 = out[1] - I*out[3];
+    temp2 = out[1] + I*out[3];
+    out[1] = temp1;
+    out[3] = temp2;
+ 
+  }else{
+    tangentfft8(base, TN, in, out, log2stride+2, stride &lt;&lt; 2, N &gt;&gt; 2);
+    tangentfft8(base, TN, in+(stride*2), out+2*N/8, log2stride+3, stride &lt;&lt; 3, N &gt;&gt; 3);
+    tangentfft8(base, TN, in-(stride*2), out+3*N/8, log2stride+3, stride &lt;&lt; 3, N &gt;&gt; 3);
+    tangentfft8(base, TN, in+(stride), out+4*N/8, log2stride+2, stride &lt;&lt; 2, N &gt;&gt; 2);
+    tangentfft8(base, TN, in-(stride), out+6*N/8, log2stride+2, stride &lt;&lt; 2, N &gt;&gt; 2);
+		int k;
+    for(k=0;k&lt;N/8;k++) {
+			data_t w0 = LUT0[k&lt;&lt;log2stride];
+			data_t w1 = LUT1[k&lt;&lt;log2stride];
+			data_t w2 = LUT2[k&lt;&lt;log2stride];
+ 
+      data_t zk_p   = w0       * out[k+4*N/8];
+      data_t zk_n   = conj(w0) * out[k+6*N/8];
+      data_t zk2_p  = w1       * out[k+5*N/8];
+      data_t zk2_n  = conj(w1) * out[k+7*N/8];
+      data_t uk     = out[k]                  * s4[k&lt;&lt;log2stride];
+      data_t uk2    = out[k+N/8]              * s4[k+N/8 &lt;&lt; log2stride];
+      data_t yk_p   = w2       * out[k+2*N/8];
+      data_t yk_n   = conj(w2) * out[k+3*N/8];
+			
+			data_t y0 = (yk_p + yk_n)*s2[k&lt;&lt;log2stride];
+			data_t y1 = (yk_p - yk_n)*I*s2[k+N/8 &lt;&lt; log2stride];
+ 
+      out[k]       = uk + y0 + (zk_p + zk_n);
+      out[k+4*N/8] = uk + y0 - (zk_p + zk_n);
+      out[k+2*N/8] = uk - y0 - I*(zk_p - zk_n);
+      out[k+6*N/8] = uk - y0 + I*(zk_p - zk_n);
+      out[k+1*N/8] = uk2 - y1 +   (zk2_p + zk2_n);
+      out[k+3*N/8] = uk2 + y1 - I*(zk2_p - zk2_n);
+      out[k+5*N/8] = uk2 - y1 -   (zk2_p + zk2_n);
+      out[k+7*N/8] = uk2 + y1 + I*(zk2_p - zk2_n);
+    }
+  }
+ 
+}
+ 
+void tangentfft4(data_t *base, int TN, data_t *in, data_t *out, int log2stride,
+		int stride, int N) {
+	if(N == 1) {
+		if(in &lt; base) in += TN;
+		out[0] = in[0];
+	}else if(N == 2) {
+		data_t *i0 = in, *i1 = in + stride;
+		if(i0 &lt; base) i0 += TN;
+		if(i1 &lt; base) i1 += TN;
+		out[0]   = *i0 + *i1;
+		out[N/2] = *i0 - *i1;
+	}else{
+		tangentfft4(base, TN, in, out, log2stride+1, stride &lt;&lt; 1, N &gt;&gt; 1);
+		tangentfft8(base, TN, in+stride, out+N/2, log2stride+2, stride &lt;&lt; 2, N &gt;&gt; 2);
+	  tangentfft8(base, TN, in-stride, out+3*N/4, log2stride+2, stride &lt;&lt; 2, N &gt;&gt; 2);
+		
+		{	
+			data_t Uk  = out[0];
+			data_t Zk  = out[0+N/2];
+			data_t Uk2 = out[0+N/4];
+			data_t Zdk = out[0+3*N/4];
+			out[0]       = Uk  + (Zk + Zdk);
+			out[0+N/2]   = Uk  - (Zk + Zdk);
+			out[0+N/4]   = Uk2 - I*(Zk - Zdk);
+			out[0+3*N/4] = Uk2 + I*(Zk - Zdk);
+		}
+		int k;
+		for(k=1;k&lt;N/4;k++) {
+			data_t Uk  = out[k];
+			data_t Zk  = out[k+N/2];
+			data_t Uk2 = out[k+N/4];
+			data_t Zdk = out[k+3*N/4];
+			data_t w = LUT[k&lt;&lt;log2stride];
+			out[k]       = Uk  + (w*Zk + conj(w)*Zdk);
+			out[k+N/2]   = Uk  - (w*Zk + conj(w)*Zdk);
+			out[k+N/4]   = Uk2 - I*(w*Zk - conj(w)*Zdk);
+			out[k+3*N/4] = Uk2 + I*(w*Zk - conj(w)*Zdk);
+		}
+	}
+}
+ 
+void fft_init(int N) {
+	LUT0 = malloc(N/8 * sizeof(data_t));
+	LUT1 = malloc(N/8 * sizeof(data_t));
+	LUT2 = malloc(N/8 * sizeof(data_t));
+ 	LUT = malloc(N/4 * sizeof(data_t));
+ 
+	s2 = malloc(N/4 * sizeof(float));
+	s4 = malloc(N/4 * sizeof(float));
+ 
+	int i;
+	for(i=0;i&lt;N/8;i++) LUT0[i] = W(N,i)*s(N/4,i)/s(N,i);
+	for(i=0;i&lt;N/8;i++) LUT1[i] = W(N,i+N/8)*s(N/4,i+N/8)/s(N,i+N/8);
+	for(i=0;i&lt;N/8;i++) LUT2[i] = W(N,2*i)*s(N/8,i)/s(N/2,i);
+	for(i=0;i&lt;N/4;i++) LUT[i] = W(N,i)*s(N/4,i);
+	for(i=0;i&lt;N/4;i++) s4[i] = s(N/4,i)/s(N,i);
+	for(i=0;i&lt;N/4;i++) s2[i] = s(N/2,i)/s(N,i);
+}
+<caption>Simple tangent FFT with precomputed LUT</caption></code>
+  </content>
+</document>

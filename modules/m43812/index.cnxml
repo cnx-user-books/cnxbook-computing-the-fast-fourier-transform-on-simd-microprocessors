@@ -1,0 +1,528 @@
+<document xmlns="http://cnx.rice.edu/cnxml">
+  <title>Appendix 3 - FFTs with vectorized loops</title>
+<metadata xmlns:md="http://cnx.rice.edu/mdml">
+  <md:content-id>m43812</md:content-id>
+  <md:title>Appendix 3 - FFTs with vectorized loops</md:title>
+  <md:abstract/>
+  <md:uuid>918459f2-a528-4fd1-a0ef-e48f4c5b6b5d</md:uuid>
+</metadata>
+
+<content>
+    <para id="id62156">This Appendix contains source code listings corresponding to the vectorized FFT implementations in <link document="m43793">Implementation details</link>.</para><code id="uid1" display="block" class="listing">#include &lt;math.h&gt;
+#include &lt;complex.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;xmmintrin.h&gt;
+ 
+typedef complex float data_t;
+ 
+#define W(N,k) (cexp(-2.0f * M_PI * I * (float)(k) / (float)(N)))
+ 
+data_t **LUT;
+ 
+void ditfft2(data_t *in, data_t *out, int log2stride, int stride, int N) {
+	if(N == 2) {
+		out[0]   = in[0] + in[stride];
+		out[N/2] = in[0] - in[stride];
+	}else if(N == 4){
+		ditfft2(in, out, log2stride+1, stride &lt;&lt; 1, N &gt;&gt; 1);
+		ditfft2(in+stride, out+N/2, log2stride+1, stride &lt;&lt; 1, N &gt;&gt; 1);
+	
+    data_t temp0 = out[0] + out[2];
+    data_t temp1 = out[0] - out[2];
+    data_t temp2 = out[1] - I*out[3];
+    data_t temp3 = out[1] + I*out[3];
+    if(log2stride) {
+			out[0] = creal(temp0) + creal(temp2)*I;
+			out[1] = creal(temp1) + creal(temp3)*I;
+			out[2] = cimag(temp0) + cimag(temp2)*I;
+			out[3] = cimag(temp1) + cimag(temp3)*I;
+		}else{
+			out[0] = temp0;
+			out[2] = temp1;
+			out[1] = temp2;
+			out[3] = temp3;
+		}
+	}else if(!log2stride){
+		ditfft2(in, out, log2stride+1, stride &lt;&lt; 1, N &gt;&gt; 1);
+		ditfft2(in+stride, out+N/2, log2stride+1, stride &lt;&lt; 1, N &gt;&gt; 1);
+ 
+		int k;
+		for(k=0;k&lt;N/2;k+=4) {
+			__m128 Ok_re = _mm_load_ps((float *)&amp;out[k+N/2]);
+			__m128 Ok_im = _mm_load_ps((float *)&amp;out[k+N/2+2]);
+			__m128 w_re = _mm_load_ps((float *)&amp;LUT[log2stride][k]);
+			__m128 w_im = _mm_load_ps((float *)&amp;LUT[log2stride][k+2]);
+			__m128 Ek_re = _mm_load_ps((float *)&amp;out[k]);
+			__m128 Ek_im = _mm_load_ps((float *)&amp;out[k+2]);
+			__m128 wOk_re = _mm_sub_ps(_mm_mul_ps(Ok_re,w_re),_mm_mul_ps(Ok_im,w_im));
+			__m128 wOk_im = _mm_add_ps(_mm_mul_ps(Ok_re,w_im),_mm_mul_ps(Ok_im,w_re));
+			__m128 out0_re = _mm_add_ps(Ek_re, wOk_re);
+			__m128 out0_im = _mm_add_ps(Ek_im, wOk_im);
+			__m128 out1_re = _mm_sub_ps(Ek_re, wOk_re);
+			__m128 out1_im = _mm_sub_ps(Ek_im, wOk_im);
+			_mm_store_ps((float *)(out+k), _mm_unpacklo_ps(out0_re, out0_im));
+			_mm_store_ps((float *)(out+k+2), _mm_unpackhi_ps(out0_re, out0_im));
+			_mm_store_ps((float *)(out+k+N/2), _mm_unpacklo_ps(out1_re, out1_im));
+			_mm_store_ps((float *)(out+k+N/2+2), _mm_unpackhi_ps(out1_re, out1_im));
+		}
+	}else{
+		ditfft2(in, out, log2stride+1, stride &lt;&lt; 1, N &gt;&gt; 1);
+		ditfft2(in+stride, out+N/2, log2stride+1, stride &lt;&lt; 1, N &gt;&gt; 1);
+		
+		int k;
+		for(k=0;k&lt;N/2;k+=4) {
+			__m128 Ok_re = _mm_load_ps((float *)&amp;out[k+N/2]);
+			__m128 Ok_im = _mm_load_ps((float *)&amp;out[k+N/2+2]);
+			__m128 w_re = _mm_load_ps((float *)&amp;LUT[log2stride][k]);
+			__m128 w_im = _mm_load_ps((float *)&amp;LUT[log2stride][k+2]);
+			__m128 Ek_re = _mm_load_ps((float *)&amp;out[k]);
+			__m128 Ek_im = _mm_load_ps((float *)&amp;out[k+2]);
+			__m128 wOk_re = _mm_sub_ps(_mm_mul_ps(Ok_re,w_re),_mm_mul_ps(Ok_im,w_im));
+			__m128 wOk_im = _mm_add_ps(_mm_mul_ps(Ok_re,w_im),_mm_mul_ps(Ok_im,w_re));
+			_mm_store_ps((float *)(out+k), _mm_add_ps(Ek_re, wOk_re));
+			_mm_store_ps((float *)(out+k+2), _mm_add_ps(Ek_im, wOk_im));
+			_mm_store_ps((float *)(out+k+N/2), _mm_sub_ps(Ek_re, wOk_re));
+			_mm_store_ps((float *)(out+k+N/2+2), _mm_sub_ps(Ek_im, wOk_im));
+		}
+	}
+}
+ 
+void fft_init(int N) {
+	int i;
+	
+	#define log2(x) ((int)(log(x)/log(2)))
+	
+	int n_luts = log2(N)-2;
+	LUT = malloc(n_luts * sizeof(data_t *));
+	for(i=0;i&lt;n_luts;i++) {
+		int n = N / pow(2,i);
+		LUT[i] = _mm_malloc(n/2 * sizeof(data_t), 16);
+		
+		
+		int j;		
+		for(j=0;j&lt;n/2;j+=4) {
+			data_t w[4];
+			int k;
+			for(k=0;k&lt;4;k++) w[k] = W(n,j+k);
+ 
+			LUT[i][j]   = creal(w[0]) + creal(w[1])*I;
+			LUT[i][j+1] = creal(w[2]) + creal(w[3])*I;
+			LUT[i][j+2] = cimag(w[0]) + cimag(w[1])*I;
+			LUT[i][j+3] = cimag(w[2]) + cimag(w[3])*I;
+		}
+	}
+	
+}
+<caption>Radix-2 FFT with vectorized loops</caption></code>
+    <code id="uid2" display="block" class="listing">typedef struct _reg_t {
+	__m128 re, im;
+} reg_t;
+ 
+static inline reg_t MUL(reg_t a, reg_t b) {
+	reg_t r;
+	r.re = _mm_sub_ps(_mm_mul_ps(a.re,b.re),_mm_mul_ps(a.im,b.im));
+	r.im = _mm_add_ps(_mm_mul_ps(a.re,b.im),_mm_mul_ps(a.im,b.re));
+	return r;
+}
+static inline reg_t MULJ(reg_t a, reg_t b) {
+	reg_t r;
+	r.re = _mm_add_ps(_mm_mul_ps(a.re,b.re),_mm_mul_ps(a.im,b.im));
+	r.im = _mm_sub_ps(_mm_mul_ps(a.im,b.re),_mm_mul_ps(a.re,b.im));
+	return r;
+}
+ 
+static inline reg_t ADD(reg_t a, reg_t b) {
+	reg_t r;
+	r.re = _mm_add_ps(a.re,b.re);
+	r.im = _mm_add_ps(a.im,b.im);
+	return r;
+}
+static inline reg_t SUB(reg_t a, reg_t b) {
+	reg_t r;
+	r.re = _mm_sub_ps(a.re,b.re);
+	r.im = _mm_sub_ps(a.im,b.im);
+	return r;
+}
+static inline reg_t ADD_I(reg_t a, reg_t b) {
+	reg_t r;
+	r.re = _mm_sub_ps(a.re,b.im);
+	r.im = _mm_add_ps(a.im,b.re);
+	return r;
+}
+static inline reg_t SUB_I(reg_t a, reg_t b) {
+	reg_t r;
+	r.re = _mm_add_ps(a.re,b.im);
+	r.im = _mm_sub_ps(a.im,b.re);
+	return r;
+}
+ 
+static inline reg_t LOAD(float *a) {
+	reg_t r;
+	r.re = _mm_load_ps(a);
+	r.im = _mm_load_ps(a+4);
+	return r;
+}
+static inline void STORE(float *a, reg_t r) {
+	_mm_store_ps(a, r.re);
+	_mm_store_ps(a+4, r.im);
+}
+static inline void STOREIL(float *a, reg_t r) {
+	_mm_store_ps(a, _mm_unpacklo_ps(r.re, r.im));
+	_mm_store_ps(a+4, _mm_unpackhi_ps(r.re, r.im));
+}
+<caption>Vectorized math functions for split-radix implementations</caption></code>
+    <code id="uid3" display="block" class="listing">#include &lt;math.h&gt;
+#include &lt;complex.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;xmmintrin.h&gt;
+ 
+typedef complex float data_t;
+ 
+#define W(N,k) (cexp(-2.0f * M_PI * I * (float)(k) / (float)(N)))
+data_t **LUT1;
+data_t **LUT3;
+ 
+#include "vecmath.h"
+ 
+void splitfft(data_t *in, data_t *out,
+					int log2stride, int stride, int N) {
+	
+	if(N == 1) {
+		out[0] = in[0];
+	}else if(N == 2) {
+		out[0] = in[0] + in[stride];
+		out[1] = in[0] - in[stride];
+	}else if(N == 4) {
+		splitfft(in, out, log2stride+1, stride &lt;&lt; 1, N &gt;&gt; 1);
+		splitfft(in+stride, out+N/2, log2stride+2, stride &lt;&lt; 2, N &gt;&gt; 2);
+	  splitfft(in+3*stride, out+3*N/4, log2stride+2, stride &lt;&lt; 2, N &gt;&gt; 2);
+	
+			data_t temp0 = out[0]  + (out[2] + out[3]);
+			data_t temp1 = out[0]  - (out[2] + out[3]);
+			data_t temp2 = out[1] - I*(out[2] - out[3]);
+			data_t temp3 = out[1] + I*(out[2] - out[3]);
+    if(log2stride) {
+  		out[0] = creal(temp0) + creal(temp2)*I;
+  		out[1] = creal(temp1) + creal(temp3)*I;
+  		out[2] = cimag(temp0) + cimag(temp2)*I;
+  		out[3] = cimag(temp1) + cimag(temp3)*I;
+  	}else{
+			out[0] = temp0;
+			out[2] = temp1;
+			out[1] = temp2;
+			out[3] = temp3;
+  	}
+	
+	}else if(N == 8) {
+		splitfft(in, out, log2stride+1, stride &lt;&lt; 1, N &gt;&gt; 1);
+		splitfft(in+stride, out+N/2, log2stride+2, stride &lt;&lt; 2, N &gt;&gt; 2);
+	  splitfft(in+3*stride, out+3*N/4, log2stride+2, stride &lt;&lt; 2, N &gt;&gt; 2);
+	
+		data_t o[8];
+		{
+			data_t Uk  = creal(out[0]) + creal(out[2])*I;
+			data_t Zk  = out[4];
+			data_t Uk2  = creal(out[1]) + creal(out[3])*I;
+			data_t Zdk = out[6];
+			
+			o[0] = Uk  + (Zk + Zdk);
+			o[4] = Uk  - (Zk + Zdk);
+			o[2] = Uk2 - I*(Zk - Zdk);
+			o[6] = Uk2 + I*(Zk - Zdk);
+		}
+		{
+			data_t Uk = cimag(out[0]) + cimag(out[2])*I;
+			data_t Zk  = out[5];
+			data_t Uk2 = cimag(out[1]) + cimag(out[3])*I;
+			data_t Zdk = out[7];
+			data_t w1 = LUT1[log2stride][1];
+			data_t w3 = LUT3[log2stride][1];
+			
+			o[1] = Uk  + (w1*Zk + w3*Zdk);
+			o[5] = Uk  - (w1*Zk + w3*Zdk);
+			o[3] = Uk2 - I*(w1*Zk - w3*Zdk);
+			o[7] = Uk2 + I*(w1*Zk - w3*Zdk);
+		}
+		if(log2stride) {
+			out[0] = creal(o[0]) + creal(o[1])*I;
+			out[1] = creal(o[2]) + creal(o[3])*I;
+			out[2] = cimag(o[0]) + cimag(o[1])*I;
+			out[3] = cimag(o[2]) + cimag(o[3])*I;
+			out[4] = creal(o[4]) + creal(o[5])*I;
+			out[5] = creal(o[6]) + creal(o[7])*I;
+			out[6] = cimag(o[4]) + cimag(o[5])*I;
+			out[7] = cimag(o[6]) + cimag(o[7])*I;
+		}else{
+			int i;
+			for(i=0;i&lt;8;i++) out[i] = o[i];
+		}
+	}else if(!log2stride){
+ 
+		splitfft(in, out, log2stride+1, stride &lt;&lt; 1, N &gt;&gt; 1);
+		splitfft(in+stride, out+N/2, log2stride+2, stride &lt;&lt; 2, N &gt;&gt; 2);
+	  splitfft(in+3*stride, out+3*N/4, log2stride+2, stride &lt;&lt; 2, N &gt;&gt; 2);
+		int k;	
+		for(k=0;k&lt;N/4;k+=4) {
+			reg_t Uk  = LOAD((float *)&amp;out[k]);
+			reg_t Zk  = LOAD((float *)&amp;out[k+N/2]);
+			reg_t Uk2 = LOAD((float *)&amp;out[k+N/4]);
+			reg_t Zdk = LOAD((float *)&amp;out[k+3*N/4]);
+			reg_t w1 = LOAD((float *)&amp;LUT1[log2stride][k]);
+			reg_t w3 = LOAD((float *)&amp;LUT3[log2stride][k]);
+			
+			reg_t w3Zdk = MUL(w3, Zdk);
+			reg_t w1Zk = MUL(w1, Zk);
+			reg_t sum = ADD(w1Zk, w3Zdk);
+			reg_t dif = SUB(w1Zk, w3Zdk);
+			
+			STOREIL((float *)&amp;out[k], ADD(Uk, sum));
+			STOREIL((float *)&amp;out[k+N/2], SUB(Uk, sum));
+			STOREIL((float *)&amp;out[k+N/4], SUB_I(Uk2, dif));
+			STOREIL((float *)&amp;out[k+3*N/4], ADD_I(Uk2, dif));
+		}
+ 
+	}else{
+		splitfft(in, out, log2stride+1, stride &lt;&lt; 1, N &gt;&gt; 1);
+		splitfft(in+stride, out+N/2, log2stride+2, stride &lt;&lt; 2, N &gt;&gt; 2);
+	  splitfft(in+3*stride, out+3*N/4, log2stride+2, stride &lt;&lt; 2, N &gt;&gt; 2);
+		
+		int k;
+		for(k=0;k&lt;N/4;k+=4) {
+			reg_t Uk  = LOAD((float *)&amp;out[k]);
+			reg_t Zk  = LOAD((float *)&amp;out[k+N/2]);
+			reg_t Uk2 = LOAD((float *)&amp;out[k+N/4]);
+			reg_t Zdk = LOAD((float *)&amp;out[k+3*N/4]);
+			reg_t w1 = LOAD((float *)&amp;LUT1[log2stride][k]);
+			reg_t w3 = LOAD((float *)&amp;LUT3[log2stride][k]);
+			
+			reg_t w3Zdk = MUL(w3, Zdk);
+			reg_t w1Zk = MUL(w1, Zk);
+			reg_t sum = ADD(w1Zk, w3Zdk);
+			reg_t dif = SUB(w1Zk, w3Zdk);
+			
+			STORE((float *)&amp;out[k], ADD(Uk, sum));
+			STORE((float *)&amp;out[k+N/2], SUB(Uk, sum));
+			STORE((float *)&amp;out[k+N/4], SUB_I(Uk2, dif));
+			STORE((float *)&amp;out[k+3*N/4], ADD_I(Uk2, dif));
+		}
+	}
+}
+ 
+void fft_init(int N) {
+	#define log2(x) ((int)(log(x)/log(2)))
+	
+	int n_luts = log2(N)-1;
+	LUT1 = malloc(n_luts * sizeof(data_t *));
+	LUT3 = malloc(n_luts * sizeof(data_t *));
+	int i;
+	for(i=0;i&lt;n_luts;i++) {
+		int n = N / pow(2,i);
+		LUT1[i] = _mm_malloc(n/4 * sizeof(data_t),16);
+		LUT3[i] = _mm_malloc(n/4 * sizeof(data_t),16);
+		
+		if(n == 8) {
+			int j;
+			for(j=0;j&lt;n/4;j++) {
+				LUT1[i][j] = W(n,j);
+				LUT3[i][j] = W(n,3*j);
+			}
+		}else{
+			int j;		
+			for(j=0;j&lt;n/4;j+=4) {
+				data_t w1[4], w3[4];
+				int k;
+				for(k=0;k&lt;4;k++) w1[k] = W(n,j+k);
+				for(k=0;k&lt;4;k++) w3[k] = W(n,3*(j+k));
+ 
+				LUT1[i][j]   = creal(w1[0]) + creal(w1[1])*I;
+				LUT1[i][j+1] = creal(w1[2]) + creal(w1[3])*I;
+				LUT1[i][j+2] = cimag(w1[0]) + cimag(w1[1])*I;
+				LUT1[i][j+3] = cimag(w1[2]) + cimag(w1[3])*I;
+				LUT3[i][j]   = creal(w3[0]) + creal(w3[1])*I;
+				LUT3[i][j+1] = creal(w3[2]) + creal(w3[3])*I;
+				LUT3[i][j+2] = cimag(w3[0]) + cimag(w3[1])*I;
+				LUT3[i][j+3] = cimag(w3[2]) + cimag(w3[3])*I;
+			}
+		}
+	}
+}
+ 
+<caption>Split-radix FFT with vectorized loops</caption></code>
+    <code id="uid4" display="block" class="listing">#include &lt;math.h&gt;
+#include &lt;complex.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;xmmintrin.h&gt;
+ 
+typedef complex float data_t;
+ 
+#define W(N,k) (cexp(-2.0f * M_PI * I * (float)(k) / (float)(N)))
+data_t **LUT1;
+ 
+#include "vecmath.h"
+ 
+data_t *base;
+int TN;
+ 
+void conjfft(data_t *in, data_t *out,
+					int log2stride, int stride, int N) {
+	
+	if(N == 1) {
+		if(in &lt; base) in += TN;
+		out[0] = in[0];
+	}else if(N == 2) {
+		data_t *i0 = in, *i1 = in + stride;
+		if(i0 &lt; base) i0 += TN;
+		if(i1 &lt; base) i1 += TN;
+		out[0]   = *i0 + *i1;
+		out[N/2] = *i0 - *i1;
+	}else if(N == 4) {
+		conjfft(in, out, log2stride+1, stride &lt;&lt; 1, N &gt;&gt; 1);
+		conjfft(in+stride, out+N/2, log2stride+2, stride &lt;&lt; 2, N &gt;&gt; 2);
+	  conjfft(in-stride, out+3*N/4, log2stride+2, stride &lt;&lt; 2, N &gt;&gt; 2);
+	
+			data_t temp0 = out[0]  + (out[2] + out[3]);
+			data_t temp1 = out[0]  - (out[2] + out[3]);
+			data_t temp2 = out[1] - I*(out[2] - out[3]);
+			data_t temp3 = out[1] + I*(out[2] - out[3]);
+    if(log2stride) {
+  		out[0] = creal(temp0) + creal(temp2)*I;
+  		out[1] = creal(temp1) + creal(temp3)*I;
+  		out[2] = cimag(temp0) + cimag(temp2)*I;
+  		out[3] = cimag(temp1) + cimag(temp3)*I;
+  	}else{
+			out[0] = temp0;
+			out[2] = temp1;
+			out[1] = temp2;
+			out[3] = temp3;
+  	}
+	
+	}else if(N == 8) {
+		conjfft(in, out, log2stride+1, stride &lt;&lt; 1, N &gt;&gt; 1);
+		conjfft(in+stride, out+N/2, log2stride+2, stride &lt;&lt; 2, N &gt;&gt; 2);
+	  conjfft(in-stride, out+3*N/4, log2stride+2, stride &lt;&lt; 2, N &gt;&gt; 2);
+	
+		data_t o[8];
+		{
+			data_t Uk  = creal(out[0]) + creal(out[2])*I;
+			data_t Zk  = out[4];
+			data_t Uk2  = creal(out[1]) + creal(out[3])*I;
+			data_t Zdk = out[6];
+			
+			o[0] = Uk  + (Zk + Zdk);
+			o[4] = Uk  - (Zk + Zdk);
+			o[2] = Uk2 - I*(Zk - Zdk);
+			o[6] = Uk2 + I*(Zk - Zdk);
+		}
+		{
+			data_t Uk = cimag(out[0]) + cimag(out[2])*I;
+			data_t Zk  = out[5];
+			data_t Uk2 = cimag(out[1]) + cimag(out[3])*I;
+			data_t Zdk = out[7];
+			data_t w1 = LUT1[log2stride][1];
+			
+			o[1] = Uk  + (w1*Zk + conj(w1)*Zdk);
+			o[5] = Uk  - (w1*Zk + conj(w1)*Zdk);
+			o[3] = Uk2 - I*(w1*Zk - conj(w1)*Zdk);
+			o[7] = Uk2 + I*(w1*Zk - conj(w1)*Zdk);
+		}
+		if(log2stride) {
+			out[0] = creal(o[0]) + creal(o[1])*I;
+			out[1] = creal(o[2]) + creal(o[3])*I;
+			out[2] = cimag(o[0]) + cimag(o[1])*I;
+			out[3] = cimag(o[2]) + cimag(o[3])*I;
+			out[4] = creal(o[4]) + creal(o[5])*I;
+			out[5] = creal(o[6]) + creal(o[7])*I;
+			out[6] = cimag(o[4]) + cimag(o[5])*I;
+			out[7] = cimag(o[6]) + cimag(o[7])*I;
+		}else{
+			int i;
+			for(i=0;i&lt;8;i++) out[i] = o[i];
+		}
+	}else if(!log2stride){
+ 
+		conjfft(in, out, log2stride+1, stride &lt;&lt; 1, N &gt;&gt; 1);
+		conjfft(in+stride, out+N/2, log2stride+2, stride &lt;&lt; 2, N &gt;&gt; 2);
+	  conjfft(in-stride, out+3*N/4, log2stride+2, stride &lt;&lt; 2, N &gt;&gt; 2);
+		int k;	
+		for(k=0;k&lt;N/4;k+=4) {
+			reg_t Uk  = LOAD((float *)&amp;out[k]);
+			reg_t Zk  = LOAD((float *)&amp;out[k+N/2]);
+			reg_t Uk2 = LOAD((float *)&amp;out[k+N/4]);
+			reg_t Zdk = LOAD((float *)&amp;out[k+3*N/4]);
+			reg_t w1 = LOAD((float *)&amp;LUT1[log2stride][k]);
+			
+			reg_t w3Zdk = MULJ(Zdk, w1);
+			reg_t w1Zk = MUL(w1, Zk);
+			reg_t sum = ADD(w1Zk, w3Zdk);
+			reg_t dif = SUB(w1Zk, w3Zdk);
+			
+			STOREIL((float *)&amp;out[k], ADD(Uk, sum));
+			STOREIL((float *)&amp;out[k+N/2], SUB(Uk, sum));
+			STOREIL((float *)&amp;out[k+N/4], SUB_I(Uk2, dif));
+			STOREIL((float *)&amp;out[k+3*N/4], ADD_I(Uk2, dif));
+		}
+ 
+	}else{
+		conjfft(in, out, log2stride+1, stride &lt;&lt; 1, N &gt;&gt; 1);
+		conjfft(in+stride, out+N/2, log2stride+2, stride &lt;&lt; 2, N &gt;&gt; 2);
+	  conjfft(in-stride, out+3*N/4, log2stride+2, stride &lt;&lt; 2, N &gt;&gt; 2);
+		
+		int k;
+		for(k=0;k&lt;N/4;k+=4) {
+			reg_t Uk  = LOAD((float *)&amp;out[k]);
+			reg_t Zk  = LOAD((float *)&amp;out[k+N/2]);
+			reg_t Uk2 = LOAD((float *)&amp;out[k+N/4]);
+			reg_t Zdk = LOAD((float *)&amp;out[k+3*N/4]);
+			reg_t w1 = LOAD((float *)&amp;LUT1[log2stride][k]);
+			
+			reg_t w3Zdk = MULJ(Zdk, w1);
+			reg_t w1Zk = MUL(w1, Zk);
+			reg_t sum = ADD(w1Zk, w3Zdk);
+			reg_t dif = SUB(w1Zk, w3Zdk);
+			
+			STORE((float *)&amp;out[k], ADD(Uk, sum));
+			STORE((float *)&amp;out[k+N/2], SUB(Uk, sum));
+			STORE((float *)&amp;out[k+N/4], SUB_I(Uk2, dif));
+			STORE((float *)&amp;out[k+3*N/4], ADD_I(Uk2, dif));
+		}
+	}
+}
+ 
+void fft_init(int N) {
+	#define log2(x) ((int)(log(x)/log(2)))
+	int n_luts = log2(N)-1;
+	LUT1 = malloc(n_luts * sizeof(data_t *));
+	int i;
+	for(i=0;i&lt;n_luts;i++) {
+		int n = N / pow(2,i);
+		LUT1[i] = _mm_malloc(n/4 * sizeof(data_t),16);
+		
+		if(n == 8) {
+			int j;
+			for(j=0;j&lt;n/4;j++) {
+				LUT1[i][j] = W(n,j);
+			}
+		}else{
+			int j;		
+			for(j=0;j&lt;n/4;j+=4) {
+				data_t w1[4];
+				int k;
+				for(k=0;k&lt;4;k++) w1[k] = W(n,j+k);
+ 
+				LUT1[i][j]   = creal(w1[0]) + creal(w1[1])*I;
+				LUT1[i][j+1] = creal(w1[2]) + creal(w1[3])*I;
+				LUT1[i][j+2] = cimag(w1[0]) + cimag(w1[1])*I;
+				LUT1[i][j+3] = cimag(w1[2]) + cimag(w1[3])*I;
+			}
+		}
+	}
+	TN = N;
+ 
+}
+ 
+<caption>Conjugate-pair FFT with vectorized loops</caption></code>
+  </content>
+</document>

@@ -1,0 +1,698 @@
+<document xmlns="http://cnx.rice.edu/cnxml" xmlns:m="http://www.w3.org/1998/Math/MathML" xmlns:bib="http://bibtexml.sf.net/">
+  <title>Implementation Details</title>
+<metadata xmlns:md="http://cnx.rice.edu/mdml">
+  <md:content-id>m43793</md:content-id>
+  <md:title>Implementation Details</md:title>
+  <md:abstract/>
+  <md:uuid>2b826002-1ba5-45da-a100-ffdfdbfc3159</md:uuid>
+</metadata>
+
+<content>
+    <para id="id253989">This Chapter complements the mathematical perspective of <link document="m43799">Algorithms</link>
+with a more focused view of the low level details that are relevant to
+efficient implementation on SIMD microprocessors. These techniques are
+widely practised by today's state of the art implementations, and form the basis for
+more advanced techniques presented in later chapters.</para><section id="cid1"><title>Simple programs</title><para id="id254008">Fast Fourier transforms (FFTs) can be succinctly
+expressed as microprocessor algorithms that are depth first recursive. For
+example, the <link document="m43799" target-id="uid7">Cooley-Tukey FFT</link> divides a size <emphasis effect="italics">N</emphasis> transform into two size
+<emphasis effect="italics">N</emphasis>/2 transforms, which in turn are divided into size <emphasis effect="italics">N</emphasis>/4
+transforms. This recursion continues until the base case of two size 1
+transforms is reached, where the two smaller sub-transforms are then combined
+into a size 2 sub-transform, and then two completed size 2 transforms are
+combined into a size 4 transform, and so on, until the size <emphasis effect="italics">N</emphasis> transform
+is complete.</para><para id="id254377">Computing the FFT with such a depth first traversal has an important advantage in
+terms of memory locality: at any point during the traversal, the two completed
+sub-transforms that compose a larger sub-transform will still be in the closest
+level of the memory hierarchy in which they fit (see, i.a., <link target-id="bid0"/> and <link target-id="bid1"/>). In
+contrast, a breadth first traversal of a sufficiently large transform could
+force data out of cache during every pass (ibid.).</para>
+      <para id="id254395">Many implementations of the FFT require a bit-reversal permutation of either
+the input or the output data, but a depth first recursive algorithm implicitly
+performs the permutation during recursion. The bit-reversal permutation is an
+expensive computation, and despite being the subject of hundreds of research
+papers over the years, it can easily account for a large fraction of the
+FFTs runtime – more so for the conjugate-pair algorithm with the rotated
+bit-reversal permutation. Such permutations will be encountered in
+later sections, but for the mean time it should be noted that the algorithms in
+this chapter do not require bit-reversal permutations – the input and output
+are in natural order.</para>
+      <code id="uid1" display="block" class="listing">IF <m:math overflow="scroll"><m:mrow><m:mi>N</m:mi><m:mspace width="3.33333pt"/><m:mo>=</m:mo><m:mspace width="3.33333pt"/><m:mn>1</m:mn></m:mrow></m:math>
+    RETURN <m:math overflow="scroll"><m:msub><m:mi>x</m:mi><m:mn>0</m:mn></m:msub></m:math>
+  ELSE
+    <m:math overflow="scroll"><m:mrow><m:msub><m:mi>E</m:mi><m:mrow><m:msub><m:mi>k</m:mi><m:mn>2</m:mn></m:msub><m:mo>=</m:mo><m:mn>0</m:mn><m:mo>,</m:mo><m:mo>⋯</m:mo><m:mo>,</m:mo><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>2</m:mn><m:mo>-</m:mo><m:mn>1</m:mn></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:mi mathvariant="monospace">DITFFT</m:mi><m:msub><m:mn mathvariant="monospace">2</m:mn><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>2</m:mn></m:mrow></m:msub><m:mrow><m:mo>(</m:mo><m:msub><m:mi>x</m:mi><m:mrow><m:mn>2</m:mn><m:msub><m:mi>n</m:mi><m:mn>2</m:mn></m:msub></m:mrow></m:msub><m:mo>)</m:mo></m:mrow></m:mrow></m:math>
+    <m:math overflow="scroll"><m:mrow><m:msub><m:mi>O</m:mi><m:mrow><m:msub><m:mi>k</m:mi><m:mn>2</m:mn></m:msub><m:mo>=</m:mo><m:mn>0</m:mn><m:mo>,</m:mo><m:mo>⋯</m:mo><m:mo>,</m:mo><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>2</m:mn><m:mo>-</m:mo><m:mn>1</m:mn></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:mi mathvariant="monospace">DITFFT</m:mi><m:msub><m:mn mathvariant="monospace">2</m:mn><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>2</m:mn></m:mrow></m:msub><m:mrow><m:mo>(</m:mo><m:msub><m:mi>x</m:mi><m:mrow><m:mn>2</m:mn><m:msub><m:mi>n</m:mi><m:mn>2</m:mn></m:msub><m:mo>+</m:mo><m:mn>1</m:mn></m:mrow></m:msub><m:mo>)</m:mo></m:mrow></m:mrow></m:math>
+    FOR <m:math overflow="scroll"><m:mrow><m:mi>k</m:mi><m:mo>=</m:mo><m:mn>0</m:mn></m:mrow></m:math> to <m:math overflow="scroll"><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>2</m:mn><m:mo>-</m:mo><m:mn>1</m:mn></m:mrow></m:math>
+      <m:math overflow="scroll"><m:mrow><m:msub><m:mi>X</m:mi><m:mi>k</m:mi></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>E</m:mi><m:mi>k</m:mi></m:msub><m:mspace width="3.33333pt"/><m:mo>+</m:mo><m:mspace width="3.33333pt"/><m:msubsup><m:mi>ω</m:mi><m:mrow><m:mi>N</m:mi></m:mrow><m:mi>k</m:mi></m:msubsup><m:mspace width="3.33333pt"/><m:msub><m:mi>O</m:mi><m:mi>k</m:mi></m:msub></m:mrow></m:math>
+      <m:math overflow="scroll"><m:mrow><m:msub><m:mi>X</m:mi><m:mrow><m:mi>k</m:mi><m:mo>+</m:mo><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>2</m:mn></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>E</m:mi><m:mi>k</m:mi></m:msub><m:mspace width="3.33333pt"/><m:mo>-</m:mo><m:mspace width="3.33333pt"/><m:msubsup><m:mi>ω</m:mi><m:mrow><m:mi>N</m:mi></m:mrow><m:mi>k</m:mi></m:msubsup><m:mspace width="3.33333pt"/><m:msub><m:mi>O</m:mi><m:mi>k</m:mi></m:msub></m:mrow></m:math>
+    END FOR
+    RETURN <m:math overflow="scroll"><m:msub><m:mi>X</m:mi><m:mi>k</m:mi></m:msub></m:math>
+  ENDIF
+<caption><m:math overflow="scroll"><m:mrow><m:msub><m:mi mathvariant="monospace">DITFFT2</m:mi><m:mi>N</m:mi></m:msub><m:mrow><m:mo>(</m:mo><m:msub><m:mi>x</m:mi><m:mi>n</m:mi></m:msub><m:mo>)</m:mo></m:mrow></m:mrow></m:math></caption></code><section id="uid2">
+        <title>Radix-2</title>
+        <para id="id255072">A recursive depth first implementation of the Cooley-Tukey radix-2 decimation-in-time (DIT)
+FFT is described with pseudocode in <link target-id="uid1"/>, and an
+implementation coded in C with only the most basic optimization – avoiding multiply operations where <m:math overflow="scroll"><m:msubsup><m:mi>ω</m:mi><m:mi>N</m:mi><m:mn>0</m:mn></m:msubsup></m:math> is unity in the first iteration of
+the loop – is included in <link document="m43810">Appendix 1</link>. Even when compiled with a state-of-the-art
+auto-vectorizing compiler,<footnote id="uid3">Intel(R) C Intel(R) 64 Compiler XE for
+applications running on Intel(R) 64, Version 12.1.0.038 Build 20110811.</footnote> the
+code achieves poor performance on modern microprocessors, and is useful only as
+a baseline reference.<footnote id="uid4"><link document="m43804">Benchmark methods</link> contains a full account of the
+benchmark methods.</footnote></para><table id="uid5" summary="Performance of simple radix-2 FFT from a historical perspective, for size 64 real FFT">
+<tgroup cols="3"><tbody>
+              <row>
+                <entry>Implementation</entry>
+                <entry>Machine</entry>
+                <entry>Runtime</entry>
+              </row>
+              <row>
+                <entry>Danielson-Lanczos, 1942 <link target-id="bid2"/></entry>
+                <entry>Human</entry>
+                <entry>140 minutes</entry>
+              </row>
+              <row>
+                <entry>Cooley-Tukey, 1965 <link target-id="bid3"/></entry>
+                <entry>IBM 7094</entry>
+                <entry><m:math overflow="scroll"><m:mo>∼</m:mo></m:math> 10.5 ms</entry>
+              </row>
+              <row>
+                <entry><link document="m43810" target-id="uid1">Listing 1, Appendix 1</link>, 2011</entry>
+                <entry>Macbook Air 4,2</entry>
+                <entry><m:math overflow="scroll"><m:mo>∼</m:mo></m:math> 440 <m:math overflow="scroll"><m:mi>μ</m:mi></m:math>s</entry>
+              </row>
+            </tbody>
+          
+</tgroup><caption>Performance of simple radix-2 FFT from a historical perspective, for size 64 real FFT</caption>
+</table><para id="id255250">However it is worth noting that when considered from a
+historical perspective, the performance <emphasis effect="italics">does</emphasis> seem impressive – as shown
+in <link target-id="uid5"/>.
+The runtimes in <link target-id="uid5"/> are approximate; the Cooley-Tukey
+figure is roughly extrapolated from the floating point operations per second (FLOPS) count of a size 2048
+complex transform given in their 1965 paper <link target-id="bid3"/>; and the
+speed of the reference implementation is derived from the runtime of a size 64
+complex FFT (again, based on the FLOPS count). Furthermore, the
+precision differs between the results; Danielson and Lanczos computed the
+DFT to 3–5 significant figures (possibly with the aid of slide rules or adding machines),
+while the other results were computed with the host machines' implementation of
+single precision floating point arithmetic.</para>
+        <para id="id255284">The runtime performance of the FFT has improved by about seven orders of
+magnitude in 70 years, and this can largely be attributed to the computing
+machines of the day being generally faster. The following sections and chapters
+will show that the performance can be further improved by over two orders of
+magnitude if the algorithm is enhanced with optimizations that are amenable to
+the underlying machine.</para>
+      </section>
+      <section id="uid6">
+        <title>Split-radix</title>
+        <code id="uid7" display="block" class="listing">  IF <m:math overflow="scroll"><m:mrow><m:mi>N</m:mi><m:mspace width="3.33333pt"/><m:mo>=</m:mo><m:mspace width="3.33333pt"/><m:mn>1</m:mn></m:mrow></m:math>
+    RETURN <m:math overflow="scroll"><m:msub><m:mi>x</m:mi><m:mn>0</m:mn></m:msub></m:math>
+  ELSIF <m:math overflow="scroll"><m:mrow><m:mi>N</m:mi><m:mspace width="3.33333pt"/><m:mo>=</m:mo><m:mspace width="3.33333pt"/><m:mn>2</m:mn></m:mrow></m:math>
+    <m:math overflow="scroll"><m:mrow><m:msub><m:mi>X</m:mi><m:mn>0</m:mn></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>x</m:mi><m:mn>0</m:mn></m:msub><m:mspace width="3.33333pt"/><m:mo>+</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>x</m:mi><m:mn>1</m:mn></m:msub></m:mrow></m:math>
+    <m:math overflow="scroll"><m:mrow><m:msub><m:mi>X</m:mi><m:mn>1</m:mn></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>x</m:mi><m:mn>0</m:mn></m:msub><m:mspace width="3.33333pt"/><m:mo>-</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>x</m:mi><m:mn>1</m:mn></m:msub></m:mrow></m:math>
+  ELSE
+    <m:math overflow="scroll"><m:mrow><m:msub><m:mi>U</m:mi><m:mrow><m:msub><m:mi>k</m:mi><m:mn>2</m:mn></m:msub><m:mo>=</m:mo><m:mn>0</m:mn><m:mo>,</m:mo><m:mo>⋯</m:mo><m:mo>,</m:mo><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>2</m:mn><m:mo>-</m:mo><m:mn>1</m:mn></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi mathvariant="monospace">SPLITFFT</m:mi><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>2</m:mn></m:mrow></m:msub><m:mrow><m:mo>(</m:mo><m:msub><m:mi>x</m:mi><m:mrow><m:mn>2</m:mn><m:msub><m:mi>n</m:mi><m:mn>2</m:mn></m:msub></m:mrow></m:msub><m:mo>)</m:mo></m:mrow></m:mrow></m:math>
+    <m:math overflow="scroll"><m:mrow><m:msub><m:mi>Z</m:mi><m:mrow><m:msub><m:mi>k</m:mi><m:mn>4</m:mn></m:msub><m:mo>=</m:mo><m:mn>0</m:mn><m:mo>,</m:mo><m:mo>⋯</m:mo><m:mo>,</m:mo><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn><m:mo>-</m:mo><m:mn>1</m:mn></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi mathvariant="monospace">SPLITFFT</m:mi><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn></m:mrow></m:msub><m:mrow><m:mo>(</m:mo><m:msub><m:mi>x</m:mi><m:mrow><m:mn>4</m:mn><m:msub><m:mi>n</m:mi><m:mn>4</m:mn></m:msub><m:mo>+</m:mo><m:mn>1</m:mn></m:mrow></m:msub><m:mo>)</m:mo></m:mrow></m:mrow></m:math>
+    <m:math overflow="scroll"><m:mrow><m:msubsup><m:mi>Z</m:mi><m:mrow><m:msub><m:mi>k</m:mi><m:mn>4</m:mn></m:msub><m:mo>=</m:mo><m:mn>0</m:mn><m:mo>,</m:mo><m:mo>⋯</m:mo><m:mo>,</m:mo><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn><m:mo>-</m:mo><m:mn>1</m:mn></m:mrow><m:mo>'</m:mo></m:msubsup><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi mathvariant="monospace">SPLITFFT</m:mi><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn></m:mrow></m:msub><m:mrow><m:mo>(</m:mo><m:msub><m:mi>x</m:mi><m:mrow><m:mn>4</m:mn><m:msub><m:mi>n</m:mi><m:mn>4</m:mn></m:msub><m:mo>+</m:mo><m:mn>3</m:mn></m:mrow></m:msub><m:mo>)</m:mo></m:mrow></m:mrow></m:math>
+    FOR <m:math overflow="scroll"><m:mrow><m:mi>k</m:mi><m:mo>=</m:mo><m:mn>0</m:mn></m:mrow></m:math> to <m:math overflow="scroll"><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn><m:mo>-</m:mo><m:mn>1</m:mn></m:mrow></m:math>
+      <m:math overflow="scroll"><m:mrow><m:msub><m:mi>X</m:mi><m:mi>k</m:mi></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>U</m:mi><m:mi>k</m:mi></m:msub><m:mspace width="3.33333pt"/><m:mo>+</m:mo><m:mspace width="3.33333pt"/><m:mrow><m:mo>(</m:mo><m:msubsup><m:mi>ω</m:mi><m:mrow><m:mi>N</m:mi></m:mrow><m:mi>k</m:mi></m:msubsup><m:mspace width="3.33333pt"/><m:msub><m:mi>Z</m:mi><m:mi>k</m:mi></m:msub><m:mspace width="3.33333pt"/><m:mo>+</m:mo><m:mspace width="3.33333pt"/><m:msubsup><m:mi>ω</m:mi><m:mrow><m:mi>N</m:mi></m:mrow><m:mrow><m:mn>3</m:mn><m:mi>k</m:mi></m:mrow></m:msubsup><m:mspace width="3.33333pt"/><m:msubsup><m:mi>Z</m:mi><m:mi>k</m:mi><m:mo>'</m:mo></m:msubsup><m:mo>)</m:mo></m:mrow></m:mrow></m:math>
+      <m:math overflow="scroll"><m:mrow><m:msub><m:mi>X</m:mi><m:mrow><m:mi>k</m:mi><m:mo>+</m:mo><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>2</m:mn></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>U</m:mi><m:mi>k</m:mi></m:msub><m:mspace width="3.33333pt"/><m:mo>-</m:mo><m:mspace width="3.33333pt"/><m:mrow><m:mo>(</m:mo><m:msubsup><m:mi>ω</m:mi><m:mrow><m:mi>N</m:mi></m:mrow><m:mi>k</m:mi></m:msubsup><m:mspace width="3.33333pt"/><m:msub><m:mi>Z</m:mi><m:mi>k</m:mi></m:msub><m:mspace width="3.33333pt"/><m:mo>+</m:mo><m:mspace width="3.33333pt"/><m:msubsup><m:mi>ω</m:mi><m:mrow><m:mi>N</m:mi></m:mrow><m:mrow><m:mn>3</m:mn><m:mi>k</m:mi></m:mrow></m:msubsup><m:mspace width="3.33333pt"/><m:msubsup><m:mi>Z</m:mi><m:mi>k</m:mi><m:mo>'</m:mo></m:msubsup><m:mo>)</m:mo></m:mrow></m:mrow></m:math>
+      <m:math overflow="scroll"><m:mrow><m:msub><m:mi>X</m:mi><m:mrow><m:mi>k</m:mi><m:mo>+</m:mo><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>U</m:mi><m:mrow><m:mi>k</m:mi><m:mo>+</m:mo><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>-</m:mo><m:mspace width="3.33333pt"/><m:mi>i</m:mi><m:mrow><m:mo>(</m:mo><m:msubsup><m:mi>ω</m:mi><m:mrow><m:mi>N</m:mi></m:mrow><m:mi>k</m:mi></m:msubsup><m:mspace width="3.33333pt"/><m:msub><m:mi>Z</m:mi><m:mi>k</m:mi></m:msub><m:mspace width="3.33333pt"/><m:mo>-</m:mo><m:mspace width="3.33333pt"/><m:msubsup><m:mi>ω</m:mi><m:mrow><m:mi>N</m:mi></m:mrow><m:mrow><m:mn>3</m:mn><m:mi>k</m:mi></m:mrow></m:msubsup><m:mspace width="3.33333pt"/><m:msubsup><m:mi>Z</m:mi><m:mi>k</m:mi><m:mo>'</m:mo></m:msubsup><m:mo>)</m:mo></m:mrow></m:mrow></m:math>
+      <m:math overflow="scroll"><m:mrow><m:msub><m:mi>X</m:mi><m:mrow><m:mi>k</m:mi><m:mo>+</m:mo><m:mn>3</m:mn><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>U</m:mi><m:mrow><m:mi>k</m:mi><m:mo>+</m:mo><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>+</m:mo><m:mspace width="3.33333pt"/><m:mi>i</m:mi><m:mrow><m:mo>(</m:mo><m:msubsup><m:mi>ω</m:mi><m:mrow><m:mi>N</m:mi></m:mrow><m:mi>k</m:mi></m:msubsup><m:mspace width="3.33333pt"/><m:msub><m:mi>Z</m:mi><m:mi>k</m:mi></m:msub><m:mspace width="3.33333pt"/><m:mo>-</m:mo><m:mspace width="3.33333pt"/><m:msubsup><m:mi>ω</m:mi><m:mrow><m:mi>N</m:mi></m:mrow><m:mrow><m:mn>3</m:mn><m:mi>k</m:mi></m:mrow></m:msubsup><m:mspace width="3.33333pt"/><m:msubsup><m:mi>Z</m:mi><m:mi>k</m:mi><m:mo>'</m:mo></m:msubsup><m:mo>)</m:mo></m:mrow></m:mrow></m:math>
+    END FOR
+  ENDIF
+  RETURN <m:math overflow="scroll"><m:msub><m:mi>X</m:mi><m:mi>k</m:mi></m:msub></m:math>
+<caption><m:math overflow="scroll"><m:mrow><m:msub><m:mi mathvariant="monospace">SPLITFFT</m:mi><m:mi>N</m:mi></m:msub><m:mrow><m:mo>(</m:mo><m:msub><m:mi>x</m:mi><m:mi>n</m:mi></m:msub><m:mo>)</m:mo></m:mrow></m:mrow></m:math></caption></code>
+        <para id="id256371">As was the case with the radix-2 FFT in the previous section, the split-radix FFT neatly maps from
+the <link document="m43799" target-id="uid14">system of linear functions</link> to the pseudocode of <link target-id="uid7"/>, and then to the C implementation included in <link document="m43810">Appendix 1</link>.</para><para id="id256387"><link target-id="uid7"/> explicitly handles the base case for <m:math overflow="scroll"><m:mrow><m:mi>N</m:mi><m:mo>=</m:mo><m:mn>2</m:mn></m:mrow></m:math>, to accommodate not only size 2 transforms, but also size 4 and
+size 8 transforms (and all larger transforms that are ultimately composed of these smaller transforms). A size 4 transform is divided into two size 1 sub-transforms and one size 2 transform,
+which cannot be further divided by the split-radix algorithm, and so it must be handled as a base case. Likewise with the size 8 transform that divides into one size 4 sub-transform and two size 2 sub-transforms:
+the size 2 sub-transforms cannot be further decomposed with the split-radix algorithm.</para><para id="id256414">Also note that two twiddle factors, viz. <m:math overflow="scroll"><m:msubsup><m:mi>ω</m:mi><m:mi>N</m:mi><m:mi>k</m:mi></m:msubsup></m:math> and <m:math overflow="scroll"><m:mrow><m:msubsup><m:mi>ω</m:mi><m:mi>N</m:mi><m:mn>3</m:mn></m:msubsup><m:mi>k</m:mi></m:mrow></m:math>, are required for the split-radix
+decomposition; this is an advantage compared to the radix-2 decomposition which would require four
+twiddle factors for the same size 4 transform.</para>
+      </section>
+      <section id="uid8">
+        <title>Conjugate-pair</title>
+        <para id="id256467">From a pseudocode perspective, there is little difference between the ordinary split-radix algorithm
+and the conjugate-pair algorithm (see <link target-id="uid9"/>). In line 10, the <m:math overflow="scroll"><m:msub><m:mi>x</m:mi><m:mrow><m:mn>4</m:mn><m:msub><m:mi>n</m:mi><m:mn>4</m:mn></m:msub><m:mo>+</m:mo><m:mn>3</m:mn></m:mrow></m:msub></m:math> terms
+have been shifted cyclically by <m:math overflow="scroll"><m:mrow><m:mo>-</m:mo><m:mn>4</m:mn></m:mrow></m:math> to <m:math overflow="scroll"><m:msub><m:mi>x</m:mi><m:mrow><m:mn>4</m:mn><m:msub><m:mi>n</m:mi><m:mn>4</m:mn></m:msub><m:mo>-</m:mo><m:mn>1</m:mn></m:mrow></m:msub></m:math>, and in lines 12-15, the coefficient of <m:math overflow="scroll"><m:msubsup><m:mi>Z</m:mi><m:mi>k</m:mi><m:mo>'</m:mo></m:msubsup></m:math> has been
+shifted cyclically from <m:math overflow="scroll"><m:msubsup><m:mi>ω</m:mi><m:mi>N</m:mi><m:mrow><m:mn>3</m:mn><m:mi>k</m:mi></m:mrow></m:msubsup></m:math> to <m:math overflow="scroll"><m:msubsup><m:mi>ω</m:mi><m:mi>N</m:mi><m:mrow><m:mo>-</m:mo><m:mi>k</m:mi></m:mrow></m:msubsup></m:math>.</para><code id="uid9" display="block" class="listing">  IF <m:math overflow="scroll"><m:mrow><m:mi>N</m:mi><m:mspace width="3.33333pt"/><m:mo>=</m:mo><m:mspace width="3.33333pt"/><m:mn>1</m:mn></m:mrow></m:math>
+    RETURN <m:math overflow="scroll"><m:msub><m:mi>x</m:mi><m:mn>0</m:mn></m:msub></m:math>
+  ELSIF <m:math overflow="scroll"><m:mrow><m:mi>N</m:mi><m:mspace width="3.33333pt"/><m:mo>=</m:mo><m:mspace width="3.33333pt"/><m:mn>2</m:mn></m:mrow></m:math>
+    <m:math overflow="scroll"><m:mrow><m:msub><m:mi>X</m:mi><m:mn>0</m:mn></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>x</m:mi><m:mn>0</m:mn></m:msub><m:mspace width="3.33333pt"/><m:mo>+</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>x</m:mi><m:mn>1</m:mn></m:msub></m:mrow></m:math>
+    <m:math overflow="scroll"><m:mrow><m:msub><m:mi>X</m:mi><m:mn>1</m:mn></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>x</m:mi><m:mn>0</m:mn></m:msub><m:mspace width="3.33333pt"/><m:mo>-</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>x</m:mi><m:mn>1</m:mn></m:msub></m:mrow></m:math>
+  ELSE
+    <m:math overflow="scroll"><m:mrow><m:msub><m:mi>U</m:mi><m:mrow><m:msub><m:mi>k</m:mi><m:mn>2</m:mn></m:msub><m:mo>=</m:mo><m:mn>0</m:mn><m:mo>,</m:mo><m:mo>⋯</m:mo><m:mo>,</m:mo><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>2</m:mn><m:mo>-</m:mo><m:mn>1</m:mn></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi mathvariant="monospace">CONJFFT</m:mi><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>2</m:mn></m:mrow></m:msub><m:mrow><m:mo>(</m:mo><m:msub><m:mi>x</m:mi><m:mrow><m:mn>2</m:mn><m:msub><m:mi>n</m:mi><m:mn>2</m:mn></m:msub></m:mrow></m:msub><m:mo>)</m:mo></m:mrow></m:mrow></m:math>
+    <m:math overflow="scroll"><m:mrow><m:msub><m:mi>Z</m:mi><m:mrow><m:msub><m:mi>k</m:mi><m:mn>4</m:mn></m:msub><m:mo>=</m:mo><m:mn>0</m:mn><m:mo>,</m:mo><m:mo>⋯</m:mo><m:mo>,</m:mo><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn><m:mo>-</m:mo><m:mn>1</m:mn></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi mathvariant="monospace">CONJFFT</m:mi><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn></m:mrow></m:msub><m:mrow><m:mo>(</m:mo><m:msub><m:mi>x</m:mi><m:mrow><m:mn>4</m:mn><m:msub><m:mi>n</m:mi><m:mn>4</m:mn></m:msub><m:mo>+</m:mo><m:mn>1</m:mn></m:mrow></m:msub><m:mo>)</m:mo></m:mrow></m:mrow></m:math>
+    <m:math overflow="scroll"><m:mrow><m:msubsup><m:mi>Z</m:mi><m:mrow><m:msub><m:mi>k</m:mi><m:mn>4</m:mn></m:msub><m:mo>=</m:mo><m:mn>0</m:mn><m:mo>,</m:mo><m:mo>⋯</m:mo><m:mo>,</m:mo><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn><m:mo>-</m:mo><m:mn>1</m:mn></m:mrow><m:mo>'</m:mo></m:msubsup><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi mathvariant="monospace">CONJFFT</m:mi><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn></m:mrow></m:msub><m:mrow><m:mo>(</m:mo><m:msub><m:mi>x</m:mi><m:mrow><m:mn>4</m:mn><m:msub><m:mi>n</m:mi><m:mn>4</m:mn></m:msub><m:mo>-</m:mo><m:mn>1</m:mn></m:mrow></m:msub><m:mo>)</m:mo></m:mrow></m:mrow></m:math>
+    FOR <m:math overflow="scroll"><m:mrow><m:mi>k</m:mi><m:mo>=</m:mo><m:mn>0</m:mn></m:mrow></m:math> to <m:math overflow="scroll"><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn><m:mo>-</m:mo><m:mn>1</m:mn></m:mrow></m:math>
+      <m:math overflow="scroll"><m:mrow><m:msub><m:mi>X</m:mi><m:mi>k</m:mi></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>U</m:mi><m:mi>k</m:mi></m:msub><m:mspace width="3.33333pt"/><m:mo>+</m:mo><m:mspace width="3.33333pt"/><m:mrow><m:mo>(</m:mo><m:msubsup><m:mi>ω</m:mi><m:mrow><m:mi>N</m:mi></m:mrow><m:mi>k</m:mi></m:msubsup><m:mspace width="3.33333pt"/><m:msub><m:mi>Z</m:mi><m:mi>k</m:mi></m:msub><m:mspace width="3.33333pt"/><m:mo>+</m:mo><m:mspace width="3.33333pt"/><m:msubsup><m:mi>ω</m:mi><m:mrow><m:mi>N</m:mi></m:mrow><m:mrow><m:mo>-</m:mo><m:mi>k</m:mi></m:mrow></m:msubsup><m:mspace width="3.33333pt"/><m:msubsup><m:mi>Z</m:mi><m:mi>k</m:mi><m:mo>'</m:mo></m:msubsup><m:mo>)</m:mo></m:mrow></m:mrow></m:math>
+      <m:math overflow="scroll"><m:mrow><m:msub><m:mi>X</m:mi><m:mrow><m:mi>k</m:mi><m:mo>+</m:mo><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>2</m:mn></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>U</m:mi><m:mi>k</m:mi></m:msub><m:mspace width="3.33333pt"/><m:mo>-</m:mo><m:mspace width="3.33333pt"/><m:mrow><m:mo>(</m:mo><m:msubsup><m:mi>ω</m:mi><m:mrow><m:mi>N</m:mi></m:mrow><m:mi>k</m:mi></m:msubsup><m:mspace width="3.33333pt"/><m:msub><m:mi>Z</m:mi><m:mi>k</m:mi></m:msub><m:mspace width="3.33333pt"/><m:mo>+</m:mo><m:mspace width="3.33333pt"/><m:msubsup><m:mi>ω</m:mi><m:mrow><m:mi>N</m:mi></m:mrow><m:mrow><m:mo>-</m:mo><m:mi>k</m:mi></m:mrow></m:msubsup><m:mspace width="3.33333pt"/><m:msubsup><m:mi>Z</m:mi><m:mi>k</m:mi><m:mo>'</m:mo></m:msubsup><m:mo>)</m:mo></m:mrow></m:mrow></m:math>
+      <m:math overflow="scroll"><m:mrow><m:msub><m:mi>X</m:mi><m:mrow><m:mi>k</m:mi><m:mo>+</m:mo><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>U</m:mi><m:mrow><m:mi>k</m:mi><m:mo>+</m:mo><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>-</m:mo><m:mspace width="3.33333pt"/><m:mi>i</m:mi><m:mrow><m:mo>(</m:mo><m:msubsup><m:mi>ω</m:mi><m:mrow><m:mi>N</m:mi></m:mrow><m:mi>k</m:mi></m:msubsup><m:mspace width="3.33333pt"/><m:msub><m:mi>Z</m:mi><m:mi>k</m:mi></m:msub><m:mspace width="3.33333pt"/><m:mo>-</m:mo><m:mspace width="3.33333pt"/><m:msubsup><m:mi>ω</m:mi><m:mrow><m:mi>N</m:mi></m:mrow><m:mrow><m:mo>-</m:mo><m:mi>k</m:mi></m:mrow></m:msubsup><m:mspace width="3.33333pt"/><m:msubsup><m:mi>Z</m:mi><m:mi>k</m:mi><m:mo>'</m:mo></m:msubsup><m:mo>)</m:mo></m:mrow></m:mrow></m:math>
+      <m:math overflow="scroll"><m:mrow><m:msub><m:mi>X</m:mi><m:mrow><m:mi>k</m:mi><m:mo>+</m:mo><m:mn>3</m:mn><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>U</m:mi><m:mrow><m:mi>k</m:mi><m:mo>+</m:mo><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>+</m:mo><m:mspace width="3.33333pt"/><m:mi>i</m:mi><m:mrow><m:mo>(</m:mo><m:msubsup><m:mi>ω</m:mi><m:mrow><m:mi>N</m:mi></m:mrow><m:mi>k</m:mi></m:msubsup><m:mspace width="3.33333pt"/><m:msub><m:mi>Z</m:mi><m:mi>k</m:mi></m:msub><m:mspace width="3.33333pt"/><m:mo>-</m:mo><m:mspace width="3.33333pt"/><m:msubsup><m:mi>ω</m:mi><m:mrow><m:mi>N</m:mi></m:mrow><m:mrow><m:mo>-</m:mo><m:mi>k</m:mi></m:mrow></m:msubsup><m:mspace width="3.33333pt"/><m:msubsup><m:mi>Z</m:mi><m:mi>k</m:mi><m:mo>'</m:mo></m:msubsup><m:mo>)</m:mo></m:mrow></m:mrow></m:math>
+    END FOR
+  ENDIF
+  RETURN <m:math overflow="scroll"><m:msub><m:mi>X</m:mi><m:mi>k</m:mi></m:msub></m:math>
+<caption><m:math overflow="scroll"><m:mrow><m:msub><m:mi mathvariant="monospace">CONJFFT</m:mi><m:mi>N</m:mi></m:msub><m:mrow><m:mo>(</m:mo><m:msub><m:mi>x</m:mi><m:mi>n</m:mi></m:msub><m:mo>)</m:mo></m:mrow></m:mrow></m:math></caption></code>
+        <para id="id257712">The <link document="m43810" target-id="uid3">source code</link> has a few subtle differences that are not revealed in the
+pseudocode. The pseudocode in <link target-id="uid9"/> requires an array of complex numbers <m:math overflow="scroll"><m:msub><m:mi>x</m:mi><m:mi>n</m:mi></m:msub></m:math>
+for input, but the <link document="m43810" target-id="uid3">source code</link> requires a reference to an array of complex numbers with
+a stride<footnote id="uid10">A stride of <m:math overflow="scroll"><m:mi>n</m:mi></m:math> would indicate that only every <m:math overflow="scroll"><m:msup><m:mi>n</m:mi><m:mrow><m:mi>t</m:mi><m:mi>h</m:mi></m:mrow></m:msup></m:math> term is being referred to.</footnote> – this
+avoids copying <m:math overflow="scroll"><m:msub><m:mi>x</m:mi><m:mi>n</m:mi></m:msub></m:math> into three separate arrays, viz. <m:math overflow="scroll"><m:msub><m:mi>x</m:mi><m:mrow><m:mn>2</m:mn><m:msub><m:mi>n</m:mi><m:mn>2</m:mn></m:msub></m:mrow></m:msub></m:math>, <m:math overflow="scroll"><m:msub><m:mi>x</m:mi><m:mrow><m:mn>4</m:mn><m:msub><m:mi>n</m:mi><m:mn>4</m:mn></m:msub><m:mo>+</m:mo><m:mn>1</m:mn></m:mrow></m:msub></m:math> and <m:math overflow="scroll"><m:msub><m:mi>x</m:mi><m:mrow><m:mn>4</m:mn><m:msub><m:mi>n</m:mi><m:mn>4</m:mn></m:msub><m:mo>-</m:mo><m:mn>1</m:mn></m:mrow></m:msub></m:math>, with
+every invocation of <link target-id="uid9"/>. The subtle complication arises due to the cyclic shifting of the
+<m:math overflow="scroll"><m:msub><m:mi>x</m:mi><m:mrow><m:mn>4</m:mn><m:msub><m:mi>n</m:mi><m:mn>4</m:mn></m:msub><m:mo>-</m:mo><m:mn>1</m:mn></m:mrow></m:msub></m:math> term; the negative shifting results in pointers that reference data before the start of the array.
+Rather than immediately wrapping the references around to end of the array such that they always point to valid
+data, the recursion proceeds until the base cases are reached before any adjustment is performed. Once at the leaves of the recursion, any pointers that reference data lying before the start of the input array are incremented by <m:math overflow="scroll"><m:mi>N</m:mi></m:math> elements,<footnote id="uid11">In this case, <m:math overflow="scroll"><m:mi>N</m:mi></m:math> refers to the size of the
+outer most transform rather than the size of the sub-transform.</footnote> so as to point to the correct data.</para><code id="uid12" display="block" class="listing">  IF <m:math overflow="scroll"><m:mrow><m:mi>N</m:mi><m:mspace width="3.33333pt"/><m:mo>=</m:mo><m:mspace width="3.33333pt"/><m:mn>1</m:mn></m:mrow></m:math>
+    RETURN <m:math overflow="scroll"><m:msub><m:mi>x</m:mi><m:mn>0</m:mn></m:msub></m:math>
+  ELSIF <m:math overflow="scroll"><m:mrow><m:mi>N</m:mi><m:mspace width="3.33333pt"/><m:mo>=</m:mo><m:mspace width="3.33333pt"/><m:mn>2</m:mn></m:mrow></m:math>
+    <m:math overflow="scroll"><m:mrow><m:msub><m:mi>X</m:mi><m:mn>0</m:mn></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>x</m:mi><m:mn>0</m:mn></m:msub><m:mspace width="3.33333pt"/><m:mo>+</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>x</m:mi><m:mn>1</m:mn></m:msub></m:mrow></m:math>
+    <m:math overflow="scroll"><m:mrow><m:msub><m:mi>X</m:mi><m:mn>1</m:mn></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>x</m:mi><m:mn>0</m:mn></m:msub><m:mspace width="3.33333pt"/><m:mo>-</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>x</m:mi><m:mn>1</m:mn></m:msub></m:mrow></m:math>
+  ELSE
+    <m:math overflow="scroll"><m:mrow><m:msub><m:mi>U</m:mi><m:mrow><m:msub><m:mi>k</m:mi><m:mn>2</m:mn></m:msub><m:mo>=</m:mo><m:mn>0</m:mn><m:mo>,</m:mo><m:mo>⋯</m:mo><m:mo>,</m:mo><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>2</m:mn><m:mo>-</m:mo><m:mn>1</m:mn></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mrow><m:mi mathvariant="monospace">TANGENTFFT</m:mi><m:mn mathvariant="monospace">4</m:mn></m:mrow><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>2</m:mn></m:mrow></m:msub><m:mrow><m:mo>(</m:mo><m:msub><m:mi>x</m:mi><m:mrow><m:mn>2</m:mn><m:msub><m:mi>n</m:mi><m:mn>2</m:mn></m:msub></m:mrow></m:msub><m:mo>)</m:mo></m:mrow></m:mrow></m:math>
+    <m:math overflow="scroll"><m:mrow><m:msub><m:mi>Z</m:mi><m:mrow><m:msub><m:mi>k</m:mi><m:mn>4</m:mn></m:msub><m:mo>=</m:mo><m:mn>0</m:mn><m:mo>,</m:mo><m:mo>⋯</m:mo><m:mo>,</m:mo><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn><m:mo>-</m:mo><m:mn>1</m:mn></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mrow><m:mi mathvariant="monospace">TANGENTFFT</m:mi><m:mn mathvariant="monospace">8</m:mn></m:mrow><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn></m:mrow></m:msub><m:mrow><m:mo>(</m:mo><m:msub><m:mi>x</m:mi><m:mrow><m:mn>4</m:mn><m:msub><m:mi>n</m:mi><m:mn>4</m:mn></m:msub><m:mo>+</m:mo><m:mn>1</m:mn></m:mrow></m:msub><m:mo>)</m:mo></m:mrow></m:mrow></m:math>
+    <m:math overflow="scroll"><m:mrow><m:msubsup><m:mi>Z</m:mi><m:mrow><m:msub><m:mi>k</m:mi><m:mn>4</m:mn></m:msub><m:mo>=</m:mo><m:mn>0</m:mn><m:mo>,</m:mo><m:mo>⋯</m:mo><m:mo>,</m:mo><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn><m:mo>-</m:mo><m:mn>1</m:mn></m:mrow><m:mo>'</m:mo></m:msubsup><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mrow><m:mi mathvariant="monospace">TANGENTFFT</m:mi><m:mn mathvariant="monospace">8</m:mn></m:mrow><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn></m:mrow></m:msub><m:mrow><m:mo>(</m:mo><m:msub><m:mi>x</m:mi><m:mrow><m:mn>4</m:mn><m:msub><m:mi>n</m:mi><m:mn>4</m:mn></m:msub><m:mo>-</m:mo><m:mn>1</m:mn></m:mrow></m:msub><m:mo>)</m:mo></m:mrow></m:mrow></m:math>
+    FOR <m:math overflow="scroll"><m:mrow><m:mi>k</m:mi><m:mo>=</m:mo><m:mn>0</m:mn></m:mrow></m:math> to <m:math overflow="scroll"><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn><m:mo>-</m:mo><m:mn>1</m:mn></m:mrow></m:math>
+      <m:math overflow="scroll"><m:mrow><m:msub><m:mi>X</m:mi><m:mi>k</m:mi></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>U</m:mi><m:mi>k</m:mi></m:msub><m:mspace width="3.33333pt"/><m:mo>+</m:mo><m:mspace width="3.33333pt"/><m:mrow><m:mo>(</m:mo><m:msubsup><m:mi>ω</m:mi><m:mrow><m:mi>N</m:mi></m:mrow><m:mi>k</m:mi></m:msubsup><m:mspace width="3.33333pt"/><m:msub><m:mi>s</m:mi><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn><m:mo>,</m:mo><m:mi>k</m:mi></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:msub><m:mi>Z</m:mi><m:mi>k</m:mi></m:msub><m:mspace width="3.33333pt"/><m:mo>+</m:mo><m:mspace width="3.33333pt"/><m:msubsup><m:mi>ω</m:mi><m:mrow><m:mi>N</m:mi></m:mrow><m:mrow><m:mo>-</m:mo><m:mi>k</m:mi></m:mrow></m:msubsup><m:mspace width="3.33333pt"/><m:msub><m:mi>s</m:mi><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn><m:mo>,</m:mo><m:mi>k</m:mi></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:msubsup><m:mi>Z</m:mi><m:mi>k</m:mi><m:mo>'</m:mo></m:msubsup><m:mo>)</m:mo></m:mrow></m:mrow></m:math>
+      <m:math overflow="scroll"><m:mrow><m:msub><m:mi>X</m:mi><m:mrow><m:mi>k</m:mi><m:mo>+</m:mo><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>2</m:mn></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>U</m:mi><m:mi>k</m:mi></m:msub><m:mspace width="3.33333pt"/><m:mo>-</m:mo><m:mspace width="3.33333pt"/><m:mrow><m:mo>(</m:mo><m:msubsup><m:mi>ω</m:mi><m:mrow><m:mi>N</m:mi></m:mrow><m:mi>k</m:mi></m:msubsup><m:mspace width="3.33333pt"/><m:msub><m:mi>s</m:mi><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn><m:mo>,</m:mo><m:mi>k</m:mi></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:msub><m:mi>Z</m:mi><m:mi>k</m:mi></m:msub><m:mspace width="3.33333pt"/><m:mo>+</m:mo><m:mspace width="3.33333pt"/><m:msubsup><m:mi>ω</m:mi><m:mrow><m:mi>N</m:mi></m:mrow><m:mrow><m:mo>-</m:mo><m:mi>k</m:mi></m:mrow></m:msubsup><m:mspace width="3.33333pt"/><m:msub><m:mi>s</m:mi><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn><m:mo>,</m:mo><m:mi>k</m:mi></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:msubsup><m:mi>Z</m:mi><m:mi>k</m:mi><m:mo>'</m:mo></m:msubsup><m:mo>)</m:mo></m:mrow></m:mrow></m:math>
+      <m:math overflow="scroll"><m:mrow><m:msub><m:mi>X</m:mi><m:mrow><m:mi>k</m:mi><m:mo>+</m:mo><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>U</m:mi><m:mrow><m:mi>k</m:mi><m:mo>+</m:mo><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>-</m:mo><m:mspace width="3.33333pt"/><m:mi>i</m:mi><m:mrow><m:mo>(</m:mo><m:msubsup><m:mi>ω</m:mi><m:mrow><m:mi>N</m:mi></m:mrow><m:mi>k</m:mi></m:msubsup><m:mspace width="3.33333pt"/><m:msub><m:mi>s</m:mi><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn><m:mo>,</m:mo><m:mi>k</m:mi></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:msub><m:mi>Z</m:mi><m:mi>k</m:mi></m:msub><m:mspace width="3.33333pt"/><m:mo>-</m:mo><m:mspace width="3.33333pt"/><m:msubsup><m:mi>ω</m:mi><m:mrow><m:mi>N</m:mi></m:mrow><m:mrow><m:mo>-</m:mo><m:mi>k</m:mi></m:mrow></m:msubsup><m:mspace width="3.33333pt"/><m:msub><m:mi>s</m:mi><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn><m:mo>,</m:mo><m:mi>k</m:mi></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:msubsup><m:mi>Z</m:mi><m:mi>k</m:mi><m:mo>'</m:mo></m:msubsup><m:mo>)</m:mo></m:mrow></m:mrow></m:math>
+      <m:math overflow="scroll"><m:mrow><m:msub><m:mi>X</m:mi><m:mrow><m:mi>k</m:mi><m:mo>+</m:mo><m:mn>3</m:mn><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>U</m:mi><m:mrow><m:mi>k</m:mi><m:mo>+</m:mo><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>+</m:mo><m:mspace width="3.33333pt"/><m:mi>i</m:mi><m:mrow><m:mo>(</m:mo><m:msubsup><m:mi>ω</m:mi><m:mrow><m:mi>N</m:mi></m:mrow><m:mi>k</m:mi></m:msubsup><m:mspace width="3.33333pt"/><m:msub><m:mi>s</m:mi><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn><m:mo>,</m:mo><m:mi>k</m:mi></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:msub><m:mi>Z</m:mi><m:mi>k</m:mi></m:msub><m:mspace width="3.33333pt"/><m:mo>-</m:mo><m:mspace width="3.33333pt"/><m:msubsup><m:mi>ω</m:mi><m:mrow><m:mi>N</m:mi></m:mrow><m:mrow><m:mo>-</m:mo><m:mi>k</m:mi></m:mrow></m:msubsup><m:mspace width="3.33333pt"/><m:msub><m:mi>s</m:mi><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn><m:mo>,</m:mo><m:mi>k</m:mi></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:msubsup><m:mi>Z</m:mi><m:mi>k</m:mi><m:mo>'</m:mo></m:msubsup><m:mo>)</m:mo></m:mrow></m:mrow></m:math>
+    END FOR
+  ENDIF
+  RETURN <m:math overflow="scroll"><m:msub><m:mi>X</m:mi><m:mi>k</m:mi></m:msub></m:math>
+<caption><m:math overflow="scroll"><m:mrow><m:msub><m:mrow><m:mi mathvariant="monospace">TANGENTFFT</m:mi><m:mn mathvariant="monospace">4</m:mn></m:mrow><m:mi>N</m:mi></m:msub><m:mrow><m:mo>(</m:mo><m:msub><m:mi>x</m:mi><m:mi>n</m:mi></m:msub><m:mo>)</m:mo></m:mrow></m:mrow></m:math></caption></code>
+        <code id="uid13" display="block" class="listing">  IF <m:math overflow="scroll"><m:mrow><m:mi>N</m:mi><m:mspace width="3.33333pt"/><m:mo>=</m:mo><m:mspace width="3.33333pt"/><m:mn>1</m:mn></m:mrow></m:math>
+    RETURN <m:math overflow="scroll"><m:msub><m:mi>x</m:mi><m:mn>0</m:mn></m:msub></m:math>
+  ELSIF <m:math overflow="scroll"><m:mrow><m:mi>N</m:mi><m:mspace width="3.33333pt"/><m:mo>=</m:mo><m:mspace width="3.33333pt"/><m:mn>2</m:mn></m:mrow></m:math>
+    <m:math overflow="scroll"><m:mrow><m:msub><m:mi>X</m:mi><m:mn>0</m:mn></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>x</m:mi><m:mn>0</m:mn></m:msub><m:mspace width="3.33333pt"/><m:mo>+</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>x</m:mi><m:mn>1</m:mn></m:msub></m:mrow></m:math>
+    <m:math overflow="scroll"><m:mrow><m:msub><m:mi>X</m:mi><m:mn>1</m:mn></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>x</m:mi><m:mn>0</m:mn></m:msub><m:mspace width="3.33333pt"/><m:mo>-</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>x</m:mi><m:mn>1</m:mn></m:msub></m:mrow></m:math>
+  ELSIF <m:math overflow="scroll"><m:mrow><m:mi>N</m:mi><m:mspace width="3.33333pt"/><m:mo>=</m:mo><m:mspace width="3.33333pt"/><m:mn>4</m:mn></m:mrow></m:math>
+    <m:math overflow="scroll"><m:mrow><m:msub><m:mi>T</m:mi><m:mrow><m:msub><m:mi>k</m:mi><m:mn>2</m:mn></m:msub><m:mo>=</m:mo><m:mn>0</m:mn><m:mo>,</m:mo><m:mn>1</m:mn></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mrow><m:mi mathvariant="monospace">TANGENTFFT</m:mi><m:mn mathvariant="monospace">8</m:mn></m:mrow><m:mn>2</m:mn></m:msub><m:mrow><m:mo>(</m:mo><m:msub><m:mi>x</m:mi><m:mrow><m:mn>2</m:mn><m:msub><m:mi>n</m:mi><m:mn>2</m:mn></m:msub></m:mrow></m:msub><m:mo>)</m:mo></m:mrow></m:mrow></m:math>
+    <m:math overflow="scroll"><m:mrow><m:msubsup><m:mi>T</m:mi><m:mrow><m:msub><m:mi>k</m:mi><m:mn>2</m:mn></m:msub><m:mo>=</m:mo><m:mn>0</m:mn><m:mo>,</m:mo><m:mn>1</m:mn></m:mrow><m:mo>'</m:mo></m:msubsup><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mrow><m:mi mathvariant="monospace">TANGENTFFT</m:mi><m:mn mathvariant="monospace">8</m:mn></m:mrow><m:mn>2</m:mn></m:msub><m:mrow><m:mo>(</m:mo><m:msub><m:mi>x</m:mi><m:mrow><m:mn>2</m:mn><m:msub><m:mi>n</m:mi><m:mn>2</m:mn></m:msub><m:mo>+</m:mo><m:mn>1</m:mn></m:mrow></m:msub><m:mo>)</m:mo></m:mrow></m:mrow></m:math>
+    <m:math overflow="scroll"><m:mrow><m:msub><m:mi>X</m:mi><m:mn>0</m:mn></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>T</m:mi><m:mn>0</m:mn></m:msub><m:mspace width="3.33333pt"/><m:mo>+</m:mo><m:mspace width="3.33333pt"/><m:msubsup><m:mi>T</m:mi><m:mn>0</m:mn><m:mo>'</m:mo></m:msubsup></m:mrow></m:math>
+    <m:math overflow="scroll"><m:mrow><m:msub><m:mi>X</m:mi><m:mn>2</m:mn></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>T</m:mi><m:mn>0</m:mn></m:msub><m:mspace width="3.33333pt"/><m:mo>-</m:mo><m:mspace width="3.33333pt"/><m:msubsup><m:mi>T</m:mi><m:mn>0</m:mn><m:mo>'</m:mo></m:msubsup></m:mrow></m:math>
+    <m:math overflow="scroll"><m:mrow><m:msub><m:mi>X</m:mi><m:mn>1</m:mn></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>T</m:mi><m:mn>1</m:mn></m:msub><m:mspace width="3.33333pt"/><m:mo>+</m:mo><m:mspace width="3.33333pt"/><m:msubsup><m:mi>T</m:mi><m:mn>1</m:mn><m:mo>'</m:mo></m:msubsup></m:mrow></m:math>
+    <m:math overflow="scroll"><m:mrow><m:msub><m:mi>X</m:mi><m:mn>3</m:mn></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>T</m:mi><m:mn>1</m:mn></m:msub><m:mspace width="3.33333pt"/><m:mo>-</m:mo><m:mspace width="3.33333pt"/><m:msubsup><m:mi>T</m:mi><m:mn>1</m:mn><m:mo>'</m:mo></m:msubsup></m:mrow></m:math>
+  ELSE
+    <m:math overflow="scroll"><m:mrow><m:msub><m:mi>U</m:mi><m:mrow><m:msub><m:mi>k</m:mi><m:mn>4</m:mn></m:msub><m:mo>=</m:mo><m:mn>0</m:mn><m:mo>,</m:mo><m:mo>⋯</m:mo><m:mo>,</m:mo><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn><m:mo>-</m:mo><m:mn>1</m:mn></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mrow><m:mi mathvariant="monospace">TANGENTFFT</m:mi><m:mn mathvariant="monospace">8</m:mn></m:mrow><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn></m:mrow></m:msub><m:mrow><m:mo>(</m:mo><m:msub><m:mi>x</m:mi><m:mrow><m:mn>4</m:mn><m:msub><m:mi>n</m:mi><m:mn>4</m:mn></m:msub></m:mrow></m:msub><m:mo>)</m:mo></m:mrow></m:mrow></m:math>
+    <m:math overflow="scroll"><m:mrow><m:msub><m:mi>Y</m:mi><m:mrow><m:msub><m:mi>k</m:mi><m:mn>8</m:mn></m:msub><m:mo>=</m:mo><m:mn>0</m:mn><m:mo>,</m:mo><m:mo>⋯</m:mo><m:mo>,</m:mo><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>8</m:mn><m:mo>-</m:mo><m:mn>1</m:mn></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mrow><m:mi mathvariant="monospace">TANGENTFFT</m:mi><m:mn mathvariant="monospace">8</m:mn></m:mrow><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>8</m:mn></m:mrow></m:msub><m:mrow><m:mo>(</m:mo><m:msub><m:mi>x</m:mi><m:mrow><m:mn>8</m:mn><m:msub><m:mi>n</m:mi><m:mn>8</m:mn></m:msub><m:mo>+</m:mo><m:mn>2</m:mn></m:mrow></m:msub><m:mo>)</m:mo></m:mrow></m:mrow></m:math>
+    <m:math overflow="scroll"><m:mrow><m:msubsup><m:mi>Y</m:mi><m:mrow><m:msub><m:mi>k</m:mi><m:mn>8</m:mn></m:msub><m:mo>=</m:mo><m:mn>0</m:mn><m:mo>,</m:mo><m:mo>⋯</m:mo><m:mo>,</m:mo><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>8</m:mn><m:mo>-</m:mo><m:mn>1</m:mn></m:mrow><m:mo>'</m:mo></m:msubsup><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mrow><m:mi mathvariant="monospace">TANGENTFFT</m:mi><m:mn mathvariant="monospace">8</m:mn></m:mrow><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>8</m:mn></m:mrow></m:msub><m:mrow><m:mo>(</m:mo><m:msub><m:mi>x</m:mi><m:mrow><m:mn>8</m:mn><m:msub><m:mi>n</m:mi><m:mn>8</m:mn></m:msub><m:mo>-</m:mo><m:mn>2</m:mn></m:mrow></m:msub><m:mo>)</m:mo></m:mrow></m:mrow></m:math>
+    <m:math overflow="scroll"><m:mrow><m:msub><m:mi>Z</m:mi><m:mrow><m:msub><m:mi>k</m:mi><m:mn>4</m:mn></m:msub><m:mo>=</m:mo><m:mn>0</m:mn><m:mo>,</m:mo><m:mo>⋯</m:mo><m:mo>,</m:mo><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn><m:mo>-</m:mo><m:mn>1</m:mn></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mrow><m:mi mathvariant="monospace">TANGENTFFT</m:mi><m:mn mathvariant="monospace">8</m:mn></m:mrow><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn></m:mrow></m:msub><m:mrow><m:mo>(</m:mo><m:msub><m:mi>x</m:mi><m:mrow><m:mn>4</m:mn><m:msub><m:mi>n</m:mi><m:mn>4</m:mn></m:msub><m:mo>+</m:mo><m:mn>1</m:mn></m:mrow></m:msub><m:mo>)</m:mo></m:mrow></m:mrow></m:math>
+    <m:math overflow="scroll"><m:mrow><m:msubsup><m:mi>Z</m:mi><m:mrow><m:msub><m:mi>k</m:mi><m:mn>4</m:mn></m:msub><m:mo>=</m:mo><m:mn>0</m:mn><m:mo>,</m:mo><m:mo>⋯</m:mo><m:mo>,</m:mo><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn><m:mo>-</m:mo><m:mn>1</m:mn></m:mrow><m:mo>'</m:mo></m:msubsup><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mrow><m:mi mathvariant="monospace">TANGENTFFT</m:mi><m:mn mathvariant="monospace">8</m:mn></m:mrow><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn></m:mrow></m:msub><m:mrow><m:mo>(</m:mo><m:msub><m:mi>x</m:mi><m:mrow><m:mn>4</m:mn><m:msub><m:mi>n</m:mi><m:mn>4</m:mn></m:msub><m:mo>-</m:mo><m:mn>1</m:mn></m:mrow></m:msub><m:mo>)</m:mo></m:mrow></m:mrow></m:math>
+    FOR <m:math overflow="scroll"><m:mrow><m:mi>k</m:mi><m:mo>=</m:mo><m:mn>0</m:mn></m:mrow></m:math> to <m:math overflow="scroll"><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>8</m:mn><m:mo>-</m:mo><m:mn>1</m:mn></m:mrow></m:math>
+      <m:math overflow="scroll"><m:mrow><m:msub><m:mi>α</m:mi><m:mrow><m:mi>N</m:mi><m:mo>,</m:mo><m:mi>k</m:mi></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>s</m:mi><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn><m:mo>,</m:mo><m:mi>k</m:mi></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>/</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>s</m:mi><m:mrow><m:mi>N</m:mi><m:mo>,</m:mo><m:mi>k</m:mi></m:mrow></m:msub></m:mrow></m:math>
+      <m:math overflow="scroll"><m:mrow><m:msub><m:mi>β</m:mi><m:mrow><m:mi>N</m:mi><m:mo>,</m:mo><m:mi>k</m:mi></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>s</m:mi><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>8</m:mn><m:mo>,</m:mo><m:mi>k</m:mi></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>/</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>s</m:mi><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>2</m:mn><m:mo>,</m:mo><m:mi>k</m:mi></m:mrow></m:msub></m:mrow></m:math>
+      <m:math overflow="scroll"><m:mrow><m:msub><m:mi>γ</m:mi><m:mrow><m:mi>N</m:mi><m:mo>,</m:mo><m:mi>k</m:mi></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>s</m:mi><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn><m:mo>,</m:mo><m:mi>k</m:mi><m:mo>+</m:mo><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>8</m:mn></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>/</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>s</m:mi><m:mrow><m:mi>N</m:mi><m:mo>,</m:mo><m:mi>k</m:mi><m:mo>+</m:mo><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>8</m:mn></m:mrow></m:msub></m:mrow></m:math>
+      <m:math overflow="scroll"><m:mrow><m:msub><m:mi>δ</m:mi><m:mrow><m:mi>N</m:mi><m:mo>,</m:mo><m:mi>k</m:mi></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>s</m:mi><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>2</m:mn><m:mo>,</m:mo><m:mi>k</m:mi></m:mrow></m:msub><m:mo>/</m:mo><m:msub><m:mi>s</m:mi><m:mrow><m:mi>N</m:mi><m:mo>,</m:mo><m:mi>k</m:mi></m:mrow></m:msub></m:mrow></m:math>
+      <m:math overflow="scroll"><m:mrow><m:msub><m:mi>ϵ</m:mi><m:mrow><m:mi>N</m:mi><m:mo>,</m:mo><m:mi>k</m:mi></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>s</m:mi><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>2</m:mn><m:mo>,</m:mo><m:mi>k</m:mi><m:mo>+</m:mo><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>8</m:mn></m:mrow></m:msub><m:mo>/</m:mo><m:msub><m:mi>s</m:mi><m:mrow><m:mi>N</m:mi><m:mo>,</m:mo><m:mi>k</m:mi><m:mo>+</m:mo><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>8</m:mn></m:mrow></m:msub></m:mrow></m:math>
+      <m:math overflow="scroll"><m:mrow><m:msub><m:mi>Ω</m:mi><m:mn>0</m:mn></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msubsup><m:mi>ω</m:mi><m:mrow><m:mi>N</m:mi></m:mrow><m:mi>k</m:mi></m:msubsup><m:mspace width="3.33333pt"/><m:mo>*</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>α</m:mi><m:mrow><m:mi>N</m:mi><m:mo>,</m:mo><m:mi>k</m:mi></m:mrow></m:msub></m:mrow></m:math>
+      <m:math overflow="scroll"><m:mrow><m:msub><m:mi>Ω</m:mi><m:mn>1</m:mn></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msubsup><m:mi>ω</m:mi><m:mrow><m:mi>N</m:mi></m:mrow><m:mrow><m:mi>k</m:mi><m:mo>+</m:mo><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>8</m:mn></m:mrow></m:msubsup><m:mspace width="3.33333pt"/><m:mo>*</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>γ</m:mi><m:mrow><m:mi>N</m:mi><m:mo>,</m:mo><m:mi>k</m:mi></m:mrow></m:msub></m:mrow></m:math>
+      <m:math overflow="scroll"><m:mrow><m:msub><m:mi>Ω</m:mi><m:mn>2</m:mn></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msubsup><m:mi>ω</m:mi><m:mrow><m:mi>N</m:mi></m:mrow><m:mrow><m:mn>2</m:mn><m:mi>k</m:mi></m:mrow></m:msubsup><m:mspace width="3.33333pt"/><m:mo>*</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>β</m:mi><m:mrow><m:mi>N</m:mi><m:mo>,</m:mo><m:mi>k</m:mi></m:mrow></m:msub></m:mrow></m:math>
+      <m:math overflow="scroll"><m:mrow><m:msub><m:mi>T</m:mi><m:mn>0</m:mn></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:mrow><m:mo>(</m:mo><m:msub><m:mi>Ω</m:mi><m:mn>2</m:mn></m:msub><m:mspace width="3.33333pt"/><m:msub><m:mi>Y</m:mi><m:mi>k</m:mi></m:msub><m:mspace width="3.33333pt"/><m:mo>+</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mover><m:mi>Ω</m:mi><m:mo>¯</m:mo></m:mover><m:mn>2</m:mn></m:msub><m:mspace width="3.33333pt"/><m:msub><m:mi>Y</m:mi><m:mi>k</m:mi></m:msub><m:mspace width="3.33333pt"/><m:mo>)</m:mo></m:mrow><m:mo>*</m:mo><m:msub><m:mi>δ</m:mi><m:mrow><m:mi>N</m:mi><m:mo>,</m:mo><m:mi>k</m:mi></m:mrow></m:msub></m:mrow></m:math>
+      <m:math overflow="scroll"><m:mrow><m:msub><m:mi>T</m:mi><m:mn>1</m:mn></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:mi>i</m:mi><m:mrow><m:mo>(</m:mo><m:msub><m:mi>Ω</m:mi><m:mn>2</m:mn></m:msub><m:mspace width="3.33333pt"/><m:msub><m:mi>Y</m:mi><m:mi>k</m:mi></m:msub><m:mspace width="3.33333pt"/><m:mo>-</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mover><m:mi>Ω</m:mi><m:mo>¯</m:mo></m:mover><m:mn>2</m:mn></m:msub><m:mspace width="3.33333pt"/><m:msub><m:mi>Y</m:mi><m:mi>k</m:mi></m:msub><m:mspace width="3.33333pt"/><m:mo>)</m:mo></m:mrow><m:mo>*</m:mo><m:msub><m:mi>ϵ</m:mi><m:mrow><m:mi>N</m:mi><m:mo>,</m:mo><m:mi>k</m:mi></m:mrow></m:msub></m:mrow></m:math>
+      <m:math overflow="scroll"><m:mrow><m:msub><m:mi>X</m:mi><m:mi>k</m:mi></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>U</m:mi><m:mi>k</m:mi></m:msub><m:mo>*</m:mo><m:msub><m:mi>α</m:mi><m:mrow><m:mi>N</m:mi><m:mo>,</m:mo><m:mi>k</m:mi></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>+</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>T</m:mi><m:mn>0</m:mn></m:msub><m:mspace width="3.33333pt"/><m:mo>+</m:mo><m:mspace width="3.33333pt"/><m:mrow><m:mo>(</m:mo><m:msub><m:mi>Ω</m:mi><m:mn>0</m:mn></m:msub><m:mspace width="3.33333pt"/><m:msub><m:mi>Z</m:mi><m:mi>k</m:mi></m:msub><m:mspace width="3.33333pt"/><m:mo>+</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mover><m:mi>Ω</m:mi><m:mo>¯</m:mo></m:mover><m:mn>0</m:mn></m:msub><m:mspace width="3.33333pt"/><m:msubsup><m:mi>Z</m:mi><m:mi>k</m:mi><m:mo>'</m:mo></m:msubsup><m:mo>)</m:mo></m:mrow></m:mrow></m:math>
+      <m:math overflow="scroll"><m:mrow><m:msub><m:mi>X</m:mi><m:mrow><m:mi>k</m:mi><m:mo>+</m:mo><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>2</m:mn></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>U</m:mi><m:mi>k</m:mi></m:msub><m:mo>*</m:mo><m:msub><m:mi>α</m:mi><m:mrow><m:mi>N</m:mi><m:mo>,</m:mo><m:mi>k</m:mi></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>+</m:mo><m:msub><m:mi>T</m:mi><m:mn>0</m:mn></m:msub><m:mspace width="3.33333pt"/><m:mo>-</m:mo><m:mspace width="3.33333pt"/><m:mrow><m:mo>(</m:mo><m:msub><m:mi>Ω</m:mi><m:mn>0</m:mn></m:msub><m:mspace width="3.33333pt"/><m:msub><m:mi>Z</m:mi><m:mi>k</m:mi></m:msub><m:mspace width="3.33333pt"/><m:mo>+</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mover><m:mi>Ω</m:mi><m:mo>¯</m:mo></m:mover><m:mn>0</m:mn></m:msub><m:mspace width="3.33333pt"/><m:msubsup><m:mi>Z</m:mi><m:mi>k</m:mi><m:mo>'</m:mo></m:msubsup><m:mo>)</m:mo></m:mrow></m:mrow></m:math>
+      <m:math overflow="scroll"><m:mrow><m:msub><m:mi>X</m:mi><m:mrow><m:mi>k</m:mi><m:mo>+</m:mo><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>U</m:mi><m:mi>k</m:mi></m:msub><m:mo>*</m:mo><m:msub><m:mi>α</m:mi><m:mrow><m:mi>N</m:mi><m:mo>,</m:mo><m:mi>k</m:mi></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>-</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>T</m:mi><m:mn>0</m:mn></m:msub><m:mspace width="3.33333pt"/><m:mo>-</m:mo><m:mspace width="3.33333pt"/><m:mi>i</m:mi><m:mrow><m:mo>(</m:mo><m:msub><m:mi>Ω</m:mi><m:mn>0</m:mn></m:msub><m:mspace width="3.33333pt"/><m:msub><m:mi>Z</m:mi><m:mi>k</m:mi></m:msub><m:mspace width="3.33333pt"/><m:mo>-</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mover><m:mi>Ω</m:mi><m:mo>¯</m:mo></m:mover><m:mn>0</m:mn></m:msub><m:mspace width="3.33333pt"/><m:msubsup><m:mi>Z</m:mi><m:mi>k</m:mi><m:mo>'</m:mo></m:msubsup><m:mo>)</m:mo></m:mrow></m:mrow></m:math>
+      <m:math overflow="scroll"><m:mrow><m:msub><m:mi>X</m:mi><m:mrow><m:mi>k</m:mi><m:mo>+</m:mo><m:mn>3</m:mn><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>U</m:mi><m:mi>k</m:mi></m:msub><m:mo>*</m:mo><m:msub><m:mi>α</m:mi><m:mrow><m:mi>N</m:mi><m:mo>,</m:mo><m:mi>k</m:mi></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>-</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>T</m:mi><m:mn>0</m:mn></m:msub><m:mspace width="3.33333pt"/><m:mo>+</m:mo><m:mspace width="3.33333pt"/><m:mi>i</m:mi><m:mrow><m:mo>(</m:mo><m:msub><m:mi>Ω</m:mi><m:mn>0</m:mn></m:msub><m:mspace width="3.33333pt"/><m:msub><m:mi>Z</m:mi><m:mi>k</m:mi></m:msub><m:mspace width="3.33333pt"/><m:mo>-</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mover><m:mi>Ω</m:mi><m:mo>¯</m:mo></m:mover><m:mn>0</m:mn></m:msub><m:mspace width="3.33333pt"/><m:msubsup><m:mi>Z</m:mi><m:mi>k</m:mi><m:mo>'</m:mo></m:msubsup><m:mo>)</m:mo></m:mrow></m:mrow></m:math>
+      <m:math overflow="scroll"><m:mrow><m:msub><m:mi>X</m:mi><m:mrow><m:mi>k</m:mi><m:mo>+</m:mo><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>8</m:mn></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>U</m:mi><m:mrow><m:mi>k</m:mi><m:mo>+</m:mo><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>8</m:mn></m:mrow></m:msub><m:mo>*</m:mo><m:msub><m:mi>γ</m:mi><m:mrow><m:mi>N</m:mi><m:mo>,</m:mo><m:mi>k</m:mi></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>-</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>T</m:mi><m:mn>1</m:mn></m:msub><m:mspace width="3.33333pt"/><m:mo>+</m:mo><m:mspace width="3.33333pt"/><m:mrow><m:mo>(</m:mo><m:msub><m:mi>Ω</m:mi><m:mn>1</m:mn></m:msub><m:mspace width="3.33333pt"/><m:msub><m:mi>Z</m:mi><m:mrow><m:mi>k</m:mi><m:mo>+</m:mo><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>8</m:mn></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>+</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mover><m:mi>Ω</m:mi><m:mo>¯</m:mo></m:mover><m:mn>0</m:mn></m:msub><m:mspace width="3.33333pt"/><m:msubsup><m:mi>Z</m:mi><m:mrow><m:mi>k</m:mi><m:mo>+</m:mo><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>8</m:mn></m:mrow><m:mo>'</m:mo></m:msubsup><m:mo>)</m:mo></m:mrow></m:mrow></m:math>
+      <m:math overflow="scroll"><m:mrow><m:msub><m:mi>X</m:mi><m:mrow><m:mi>k</m:mi><m:mo>+</m:mo><m:mn>3</m:mn><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>8</m:mn></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>U</m:mi><m:mrow><m:mi>k</m:mi><m:mo>+</m:mo><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>8</m:mn></m:mrow></m:msub><m:mo>*</m:mo><m:msub><m:mi>γ</m:mi><m:mrow><m:mi>N</m:mi><m:mo>,</m:mo><m:mi>k</m:mi></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>+</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>T</m:mi><m:mn>1</m:mn></m:msub><m:mspace width="3.33333pt"/><m:mo>-</m:mo><m:mspace width="3.33333pt"/><m:mi>i</m:mi><m:mrow><m:mo>(</m:mo><m:msub><m:mi>Ω</m:mi><m:mn>1</m:mn></m:msub><m:mspace width="3.33333pt"/><m:msub><m:mi>Z</m:mi><m:mrow><m:mi>k</m:mi><m:mo>+</m:mo><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>8</m:mn></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>-</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mover><m:mi>Ω</m:mi><m:mo>¯</m:mo></m:mover><m:mn>0</m:mn></m:msub><m:mspace width="3.33333pt"/><m:msubsup><m:mi>Z</m:mi><m:mrow><m:mi>k</m:mi><m:mo>+</m:mo><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>8</m:mn></m:mrow><m:mo>'</m:mo></m:msubsup><m:mo>)</m:mo></m:mrow></m:mrow></m:math>
+      <m:math overflow="scroll"><m:mrow><m:msub><m:mi>X</m:mi><m:mrow><m:mi>k</m:mi><m:mo>+</m:mo><m:mn>5</m:mn><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>8</m:mn></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>U</m:mi><m:mrow><m:mi>k</m:mi><m:mo>+</m:mo><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>8</m:mn></m:mrow></m:msub><m:mo>*</m:mo><m:msub><m:mi>γ</m:mi><m:mrow><m:mi>N</m:mi><m:mo>,</m:mo><m:mi>k</m:mi></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>-</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>T</m:mi><m:mn>1</m:mn></m:msub><m:mspace width="3.33333pt"/><m:mo>-</m:mo><m:mspace width="3.33333pt"/><m:mrow><m:mo>(</m:mo><m:msub><m:mi>Ω</m:mi><m:mn>1</m:mn></m:msub><m:mspace width="3.33333pt"/><m:msub><m:mi>Z</m:mi><m:mrow><m:mi>k</m:mi><m:mo>+</m:mo><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>8</m:mn></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>+</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mover><m:mi>Ω</m:mi><m:mo>¯</m:mo></m:mover><m:mn>0</m:mn></m:msub><m:mspace width="3.33333pt"/><m:msubsup><m:mi>Z</m:mi><m:mrow><m:mi>k</m:mi><m:mo>+</m:mo><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>8</m:mn></m:mrow><m:mo>'</m:mo></m:msubsup><m:mo>)</m:mo></m:mrow></m:mrow></m:math>
+      <m:math overflow="scroll"><m:mrow><m:msub><m:mi>X</m:mi><m:mrow><m:mi>k</m:mi><m:mo>+</m:mo><m:mn>7</m:mn><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>8</m:mn></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>←</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>U</m:mi><m:mrow><m:mi>k</m:mi><m:mo>+</m:mo><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>8</m:mn></m:mrow></m:msub><m:mo>*</m:mo><m:msub><m:mi>γ</m:mi><m:mrow><m:mi>N</m:mi><m:mo>,</m:mo><m:mi>k</m:mi></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>+</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mi>T</m:mi><m:mn>1</m:mn></m:msub><m:mspace width="3.33333pt"/><m:mo>+</m:mo><m:mspace width="3.33333pt"/><m:mi>i</m:mi><m:mrow><m:mo>(</m:mo><m:msub><m:mi>Ω</m:mi><m:mn>1</m:mn></m:msub><m:mspace width="3.33333pt"/><m:msub><m:mi>Z</m:mi><m:mrow><m:mi>k</m:mi><m:mo>+</m:mo><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>8</m:mn></m:mrow></m:msub><m:mspace width="3.33333pt"/><m:mo>-</m:mo><m:mspace width="3.33333pt"/><m:msub><m:mover><m:mi>Ω</m:mi><m:mo>¯</m:mo></m:mover><m:mn>0</m:mn></m:msub><m:mspace width="3.33333pt"/><m:msubsup><m:mi>Z</m:mi><m:mrow><m:mi>k</m:mi><m:mo>+</m:mo><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>8</m:mn></m:mrow><m:mo>'</m:mo></m:msubsup><m:mo>)</m:mo></m:mrow></m:mrow></m:math>
+    END FOR
+  ENDIF
+  RETURN <m:math overflow="scroll"><m:msup><m:mi>X</m:mi><m:mi>k</m:mi></m:msup></m:math>
+<caption><m:math overflow="scroll"><m:mrow><m:msub><m:mrow><m:mi mathvariant="monospace">TANGENTFFT</m:mi><m:mn mathvariant="monospace">8</m:mn></m:mrow><m:mi>N</m:mi></m:msub><m:mrow><m:mo>(</m:mo><m:msub><m:mi>x</m:mi><m:mi>n</m:mi></m:msub><m:mo>)</m:mo></m:mrow></m:mrow></m:math></caption></code>
+      </section>
+      <section id="uid14">
+        <title>Tangent</title>
+        <para id="id262624">The tangent FFT is divided into two functions, described with pseudocode
+in <link target-id="uid12"/> and <link target-id="uid13"/>. If the
+tangent FFT is computed prior to convolution in the frequency domain, the
+convolution kernel can absorb the final scaling and only <link target-id="uid13"/> is required. Otherwise <link target-id="uid12"/> is
+used as a wrapper around <link target-id="uid13"/> to perform the
+rescaling, and the result <m:math overflow="scroll"><m:msub><m:mi>X</m:mi><m:mi>k</m:mi></m:msub></m:math> is in the correct basis.</para><para id="id262668"><link target-id="uid12"/> is similar to <link target-id="uid9"/>,
+except that <m:math overflow="scroll"><m:msub><m:mi>Z</m:mi><m:mi>k</m:mi></m:msub></m:math> and <m:math overflow="scroll"><m:msubsup><m:mi>Z</m:mi><m:mi>k</m:mi><m:mo>'</m:mo></m:msubsup></m:math> are computed with <link target-id="uid13"/>,
+and thus scaled by <m:math overflow="scroll"><m:mrow><m:mn>1</m:mn><m:mo>/</m:mo><m:msub><m:mi>s</m:mi><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn><m:mo>,</m:mo><m:mi>k</m:mi></m:mrow></m:msub></m:mrow></m:math>. Because <m:math overflow="scroll"><m:msub><m:mi>Z</m:mi><m:mi>k</m:mi></m:msub></m:math> and <m:math overflow="scroll"><m:msubsup><m:mi>Z</m:mi><m:mi>k</m:mi><m:mo>'</m:mo></m:msubsup></m:math> are respectively
+multiplied by the coefficients <m:math overflow="scroll"><m:msubsup><m:mi>ω</m:mi><m:mi>N</m:mi><m:mi>k</m:mi></m:msubsup></m:math> and <m:math overflow="scroll"><m:msubsup><m:mi>ω</m:mi><m:mi>N</m:mi><m:mrow><m:mo>-</m:mo><m:mi>k</m:mi></m:mrow></m:msubsup></m:math>, the results
+are scaled into the correct basis by absorbing <m:math overflow="scroll"><m:msub><m:mi>s</m:mi><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn><m:mo>,</m:mo><m:mi>k</m:mi></m:mrow></m:msub></m:math> into the
+coefficients.</para><para id="id262840"><link target-id="uid13"/> is almost a 1:1 mapping of the <link document="m43799" target-id="uid28">system of linear equations</link>, except that the base cases of <m:math overflow="scroll"><m:mrow><m:mi>N</m:mi><m:mo>=</m:mo><m:mrow><m:mn>1</m:mn><m:mo>,</m:mo><m:mn>2</m:mn><m:mo>,</m:mo><m:mn>4</m:mn></m:mrow></m:mrow></m:math> are handled
+explicitly. In <link target-id="uid13"/>, the case of <m:math overflow="scroll"><m:mrow><m:mi>N</m:mi><m:mo>=</m:mo><m:mn>4</m:mn></m:mrow></m:math> is handled
+with two size 2 base cases, which are combined into a size 4 FFT.</para></section>
+      <section id="uid15">
+        <title>Putting it all together</title>
+        <figure id="uid16">
+          <media id="uid16_media" alt="">
+            <image mime-type="image/png" src="../../media/simple18.png" id="uid16_onlineimage" width="480"><!-- NOTE: attribute width changes image size online (pixels). original width is 480. --></image>
+            <image mime-type="application/postscript" for="pdf" src="../../media/simple18.eps" id="uid16_printimage" print-width="0.7">
+              <!--NOTE: attribute width changes image size in printed PDF (if specified in .tex file)-->
+            </image>
+          </media>
+          <caption>Speed of simple FFT implementations</caption>
+        </figure>
+        <para id="id262918">The simple implementations covered in this section were benchmarked for sizes
+of transforms <m:math overflow="scroll"><m:msup><m:mn>2</m:mn><m:mn>2</m:mn></m:msup></m:math> through to <m:math overflow="scroll"><m:msup><m:mn>2</m:mn><m:mn>18</m:mn></m:msup></m:math> running on a Macbook Air 4,2 and the
+results are plotted in <link target-id="uid16"/>. The speed of each
+transform is measured in Cooley-Tukey gigaflops (CTGs), where a higher measurement indicates a
+faster transform.<footnote id="uid17">CTGs are an inverse time measurement. See
+<link document="m43804">Benchmark methods</link> for a full explanation of the benchmarking
+methods.</footnote></para>
+        <para id="id262968">It can be seen from <link target-id="uid16"/> that although the conjugate-pair and split-radix algorithms
+have exactly the same FLOP count, the conjugate-pair algorithm is substantially faster. The difference
+in speed can be attributed to the fact that the conjugate-pair algorithm requires only one twiddle factor
+per size 4 sub-transform, whereas the ordinary split-radix algorithm requires two.</para>
+        <para id="id262979">Though the tangent FFT requires the same number of twiddle factors but uses
+fewer FLOPs compared to the conjugate-pair algorithm, its performance is
+worse than the radix-2 FFT for most sizes of transform, and this can be
+attributed to the cost of computing the scaling factors.</para>
+        <para id="id262985">A simple analysis with a profiling tool reveals that each implementations'
+runtime is dominated by the time taken to compute the coefficients. Even in the
+case of the conjugate-pair algorithm, over <m:math overflow="scroll"><m:mrow><m:mn>55</m:mn><m:mo>%</m:mo></m:mrow></m:math> of the runtime is spent
+calculating the complex exponential function. Eliminating this performance
+bottleneck is the topic of the next section.</para>
+      </section>
+    </section><section id="cid2">
+      <title>Precomputed coefficients</title>
+      <para id="id263013">The speed of <link target-id="uid1"/> – <link target-id="uid13"/> may be
+dramatically improved if the coefficients are precomputed and stored in a
+lookup table (LUT).</para><para id="id263027">When computing an FFT of size <m:math overflow="scroll"><m:mi>N</m:mi></m:math>, <link target-id="uid1"/> requires <m:math overflow="scroll"><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>2</m:mn></m:mrow></m:math>
+different twiddle factors that correspond to <m:math overflow="scroll"><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>2</m:mn></m:mrow></m:math> samples of a half rotation
+around the complex plane. Rather than storing <m:math overflow="scroll"><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>2</m:mn></m:mrow></m:math> complex numbers, the
+symmetries of the sine and cosine waves that compose <m:math overflow="scroll"><m:msubsup><m:mi>ω</m:mi><m:mi>N</m:mi><m:mi>k</m:mi></m:msubsup></m:math> may be
+exploited to reduce the storage to <m:math overflow="scroll"><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn></m:mrow></m:math> real numbers – a <m:math overflow="scroll"><m:mrow><m:mn>75</m:mn><m:mo>%</m:mo></m:mrow></m:math> reduction in
+memory – by storing only one quadrant of a sine or cosine wave from which the
+real and imaginary parts of any twiddle factor can be constructed. Such a
+scheme has advantages in hardware implementations where LUT memory is a
+costly resource <link target-id="bid4"/>, but for modern microprocessor
+implementations of the FFT, it is more advantageous to have a less complex
+indexing scheme and better memory locality, rather than a smaller LUT.</para><para id="id263144">As already mentioned, each transform of size <m:math overflow="scroll"><m:mi>N</m:mi></m:math> that is computed with
+<link target-id="uid1"/> requires <m:math overflow="scroll"><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>2</m:mn></m:mrow></m:math> twiddle factors from <m:math overflow="scroll"><m:msubsup><m:mi>ω</m:mi><m:mi>N</m:mi><m:mn>0</m:mn></m:msubsup></m:math>
+through to <m:math overflow="scroll"><m:msubsup><m:mi>ω</m:mi><m:mi>N</m:mi><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>2</m:mn></m:mrow></m:msubsup></m:math>, but the two sub-transforms of
+<link target-id="uid1"/> require twiddle factors ranging from <m:math overflow="scroll"><m:msubsup><m:mi>ω</m:mi><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>2</m:mn></m:mrow><m:mn>0</m:mn></m:msubsup></m:math> through to
+<m:math overflow="scroll"><m:msubsup><m:mi>ω</m:mi><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>2</m:mn></m:mrow><m:mrow><m:mi>N</m:mi><m:mo>/</m:mo><m:mn>4</m:mn></m:mrow></m:msubsup></m:math>. The twiddle factors of the sub-transforms can be obtained
+by downsampling the parent transform's twiddle factors by a factor of 2, and
+because the downsampling factors are all powers of 2, simple shift operations
+can be used to index any twiddle factor anywhere in the transform from one
+LUT.</para><para id="id263275"><link document="m43811">Appendix 2</link> contains listings of source code that augment each of
+the simple implementations from the previous section with LUTs of
+precomputed coefficients. The modifications are fairly minor: each
+implementation now has an initialization function that populates the
+LUT(s) based on the size of the transform to be computed, and each
+transform function now has a parameter of <m:math overflow="scroll"><m:mrow><m:mi>l</m:mi><m:mi>o</m:mi><m:msub><m:mi>g</m:mi><m:mn>2</m:mn></m:msub><m:mrow><m:mo>(</m:mo><m:mi>s</m:mi><m:mi>t</m:mi><m:mi>r</m:mi><m:mi>i</m:mi><m:mi>d</m:mi><m:mi>e</m:mi><m:mo>)</m:mo></m:mrow></m:mrow></m:math>, so as to
+economically index the twiddle factors with little computation.</para><figure id="uid18">
+        <media id="uid18_media" alt="">
+          <image mime-type="image/png" src="../../media/simple-lut.png" id="uid18_onlineimage" width="480"><!-- NOTE: attribute width changes image size online (pixels). original width is 480. --></image>
+          <image mime-type="application/postscript" for="pdf" src="../../media/simple-lut.eps" id="uid18_printimage" print-width="0.7">
+            <!--NOTE: attribute width changes image size in printed PDF (if specified in .tex file)-->
+          </image>
+        </media>
+        <caption>Speed of FFTs with precomputed coefficients</caption>
+      </figure>
+      <para id="id263337">As <link target-id="uid18"/> shows, the speedup resulting from the
+precomputed twiddle LUT is dramatic – sometimes more than a factor of 6
+(cf. <link target-id="uid16"/>). Interestingly, the ordinary split-radix
+algorithm is now faster than the conjugate-pair algorithm, and inspection of
+the compiler output shows that this is due to the more complicated addressing
+scheme at the leaves of the computation, and because the compiler lacks good
+heuristics for complex multiplication by a conjugate. The performance of the
+tangent FFT is hampered by the same problem, yet the tangent FFT has
+better performance, which can be attributed to the tangent FFT having
+larger straight line blocks of code at the leaves of the computation (the
+tangent FFT has leaves of size 4, while the split-radix and conjugate-pair
+FFTs have leaves of size 2).</para>
+    </section>
+    <section id="cid3">
+      <title>Single instruction, multiple data</title>
+      <para id="id263372">The performance of the programs in the previous section may be further improved by explicitly
+describing the computation with SIMD intrinsics. Auto-vectorizing compilers, such as the
+Intel C compiler used to compile the previous examples, can extract some data-level parallelism
+and generate SIMD code
+from a scalar description of a computation, but better results can be obtained when using vector intrinsics
+to explicitly specify the parallel computation.</para>
+      <para id="id263380">Intrinsics are an alternative to inline assembly
+code when the compiler fails to meet performance constraints. In most cases an intrinsic function directly maps to a single instruction on the underlying machine, and so intrinsics provide many of the advantages of inline assembler code. But
+in contrast to inline assembler code, the compiler uses its detailed knowledge of the intrinsic semantics to provide
+better optimizations and handle tasks such as register allocation.</para>
+      <para id="id263387">Almost all desktop and handheld machines now have processors that implement
+some sort of SIMD extension to the instruction set. All major Intel
+processors since the Pentium III have implemented SSE, an extension to the
+x86 architecture that introduced 4-way single precision floating point
+computation with a new register file consisting of eight 128-bit SIMD
+registers – known as XMM registers. The AMD64 architecture doubled the number
+of XMM registers to 16, and Intel followed by implementing 16 XMM registers in
+the Intel 64 architecture. SSE has since been expanded with support for
+other data types and new instructions with the introduction of SSE2, SSE3,
+SSSE3 and SSE4. Most notably, SSE2 introduced support for double precision
+floating point arithmetic and thus Intel's first attempt at SIMD
+extensions, MMX, was effectively deprecated. Intel's recent introduction
+of the sandybridge micro-architecture heralded the first implementation of
+AVX – a major upgrade to SSE that doubled the size of XMM registers
+to 256 bits (and renamed them YMM registers), enabling 8-way single precision
+and 4-way double precision floating point arithmetic.</para>
+      <para id="id263402">Another notable example of SIMD extensions implemented in commodity
+microprocessors is the NEON extension to the ARMv7 architecture. The Cortex
+family of processors that implement ARMv7 are widely used in mobile, handheld
+and tablet computing devices such as the iPad, iPhone and Canon PowerShot A470,
+and the NEON extensions provide these embedded devices with the performance
+required for processing audio and video codecs as well as graphics and gaming
+workloads.</para>
+      <para id="id263409">Compared to SSE and AVX, NEON has some subtle differences that can
+greatly improve performance if used properly. First, it has dual length
+SIMD vectors that are aliased over the same registers; a pair of 64-bit
+registers refers to the lower and upper half of one 128-bit register – in
+contrast, the AVX extension increases the size of SSE registers to
+256-bit, but the SSE registers are only aliased over the lower half of the
+AVX registers. Second, NEON can interleave and de-interleave data during
+vector load or store operations, for up to four vectors of four elements
+interleaved together. In the context of FFTs, the
+interleaving/de-interleaving instructions can be used to reduce or eliminate
+vector permutations or shuffles.</para>
+      <section id="uid19">
+        <title>Split format vs. interleaved format</title>
+        <para id="id263431">In the previous examples, the data was stored in interleaved format (i.e., the
+real and imaginary parts composing each element of complex data are stored
+adjacently in memory), but operating on the data in split format (i.e., the
+real parts of each element are stored in one contiguous array, while the
+imaginary parts of each element are stored contiguously in another array) can
+simplify the computation when using SIMD. The case of complex
+multiplication illustrates this point.</para>
+        <code id="uid20" display="block" class="listing">  static inline __m128 MUL_INTERLEAVED(__m128 a, __m128 b) {
+    __m128 re, im;
+    re = _mm_shuffle_ps(a,a,_MM_SHUFFLE(2,2,0,0));
+    re = _mm_mul_ps(re, b);
+    im = _mm_shuffle_ps(a,a,_MM_SHUFFLE(3,3,1,1));
+    b = _mm_shuffle_ps(b,b,_MM_SHUFFLE(2,3,0,1));
+    im = _mm_mul_ps(im, b);
+    im = _mm_xor_ps(im, _mm_set_ps(0.0f, -0.0f, 0.0f, -0.0f));
+    return _mm_add_ps(re, im);
+  }
+<caption>SSE multiplication with interleaved complex data</caption></code>
+        <section id="uid21">
+          <title>Interleaved format complex multiplication</title>
+          <para id="id263550">The function in <link target-id="uid20"/> takes complex data in two
+4-way single precision SSE registers (<emphasis effect="italics">a</emphasis> and <emphasis effect="italics">b</emphasis>) and performs
+complex multiplication, returning the result in a single precision SSE
+register. The SSE intrinsic functions are prefixed with `<code display="inline">_mm_</code>',
+and the SSE data type corresponding to a single 128-bit single precision
+register is `<code display="inline">__m128</code>'.</para><para id="id263582">When operating with interleaved data, each SSE register contains two
+complex numbers. Two shuffle operations at lines 3 and 5 are used to replicate
+the real and imaginary parts (respectively) of the two complex numbers in input
+<emphasis effect="italics">a</emphasis>. At line 4, the real and imaginary parts of the two complex numbers in
+<emphasis effect="italics">b</emphasis> are each multiplied with the real parts of the complex numbers in
+<emphasis effect="italics">a</emphasis>. A third shuffle is used to swap the real and imaginary parts of the
+complex numbers in <emphasis effect="italics">b</emphasis>, before being multiplied with the imaginary parts
+of the complex numbers in <emphasis effect="italics">a</emphasis> – and the exclusive or operation at line 8
+is used to selectively negate the sign of the real parts in this result.
+Finally, the two intermediate results stored in the <emphasis effect="italics">re</emphasis> and <emphasis effect="italics">im</emphasis>
+registers are added. In total, seven SSE instructions are used to
+multiply two pairs of single precision complex numbers.</para>
+        </section>
+        <section id="uid22">
+          <title>Split format complex multiplication</title>
+          <code id="uid23" display="block" class="listing">  typedef struct _reg_t {
+    __m128 re, im;
+  } reg_t;
+ 
+  static inline reg_t MUL_SPLIT(reg_t a, reg_t b) {
+    reg_t r;
+    r.re = _mm_sub_ps(_mm_mul_ps(a.re,b.re),_mm_mul_ps(a.im,b.im));
+    r.im = _mm_add_ps(_mm_mul_ps(a.re,b.im),_mm_mul_ps(a.im,b.re));
+    return r;
+  }
+<caption>SSE multiplication with split complex data</caption></code>
+          <para id="id263734">The function in <link target-id="uid23"/> takes complex data in two
+<emphasis effect="italics">structs</emphasis> of SSE registers, performs the complex multiplication of
+each element of the vectors, and returns the result in a struct of SSE
+registers. Each struct is composed of a register containing the real parts of
+four complex numbers, and another register containing the imaginary parts – so
+the function in <link target-id="uid23"/> is effectively operating on vectors
+twice as long as the function in <link target-id="uid20"/>. The benefit
+of operating in split format is obvious: the shuffle operations that were
+required in <link target-id="uid20"/> are avoided because the real and
+imaginary parts can be implicitly swapped at the instruction level, rather than
+by awkwardly manipulating SIMD registers at the data level of abstraction.
+Thus, <link target-id="uid23"/> computes complex multiplication for vectors
+twice as long while using one less SSE instruction – not to mention other
+advantages such as reducing chains of dependent instructions. The only
+disadvantage to the split format approach is that twice as many registers are
+needed to compute a given operation – this might preclude the use of a larger
+radix or force register paging for some kernels of computation.</para></section>
+        <section id="uid24">
+          <title>Fast interleaved format complex multiplication</title>
+          <para id="id263794"><link target-id="uid25"/> is fast method of interleaved complex
+multiplication that may be used in situations where one of the operands can be
+unpacked prior to multiplication – in such cases the instruction count is
+reduced from 7 instructions to 4 instructions (cf.
+<link target-id="uid20"/>). This method of complex multiplication lends
+itself especially well to the conjugate-pair algorithm where the same twiddle
+factor is used twice – by doubling the size of the twiddle factor LUT,
+the multiplication instruction count is reduced from 14 instructions to 8
+instructions. Furthermore, large chains of dependent instructions are reduced,
+and in practice the actual performance gain can be quite impressive.</para><para id="id263818">Operand <emphasis effect="italics">a</emphasis> in <link target-id="uid20"/> has been replaced with
+two operands in <link target-id="uid25"/>: <emphasis effect="italics">re</emphasis> and <emphasis effect="italics">im</emphasis>
+– these operands have been unpacked, as was done in lines 3 and 5 of
+<link target-id="uid20"/>. Furthermore, line 8 of
+<link target-id="uid20"/> is also avoided by performing the selective
+negation during unpacking.</para><code id="uid25" display="block" class="listing">  static inline __m128
+  MUL_UNPACKED_INTERLEAVED(__m128 re, __m128 im, __m128 b) {
+    re = _mm_mul_ps(re, b);
+    im = _mm_mul_ps(im, b);
+    im = _mm_shuffle_ps(im,im,_MM_SHUFFLE(2,3,0,1));
+    return _mm_add_ps(re, im);
+  }
+<caption>SSE multiplication with partially unpacked interleaved data</caption></code>
+        </section>
+      </section>
+      <section id="uid26">
+        <title>Vectorized loops</title>
+        <para id="id263938">The performance of the FFTs in the previous sections can be increased by
+explicitly vectorizing the loops. The Macbook Air 4,2 used to compile and run
+the previous examples has a CPU that implements SSE and AVX,
+but for the purposes of simplicity, SSE intrinsics are used in the
+following examples. The loop of the radix-2 implementation is used as an
+example in <link target-id="uid27"/>.</para><code id="uid27" display="block" class="listing">  for(k=0;k&lt;N/2;k++) {
+     data_t Ek = out[k];
+     data_t Ok = out[(k+N/2)];
+     data_t w = LUT[k&lt;&lt;log2stride];
+     out[k]        = Ek + w * Ok;
+     out[(k+N/2) ] = Ek - w * Ok;
+   }
+<caption>Inner loop of radix-2 Cooley-Tukey FFT</caption></code>
+        <para id="id264030">Each iteration of the loop in <link target-id="uid27"/> accesses two
+elements of complex data in the array <emphasis effect="italics">out</emphasis>, and one complex element from
+the twiddle factor LUT. Over multiple iterations of the loop, <emphasis effect="italics">out</emphasis>
+is accessed contiguously in two places, but the LUT is accessed with a
+non-unit stride in all sub-transforms except the outer transform. Some vector
+machines can perform what are known as vector scatter or gather memory
+operations – where a vector gather could be used in this case to gather
+elements from the LUT that are separated by a stride. But SSE only
+supports contiguous or <emphasis effect="italics">streaming</emphasis> access to memory. Thus, to efficiently
+compute multiple iterations of the loop in parallel, the twiddle factor
+LUT is replaced with an array of LUTs – each corresponding to a
+sub-transform of a particular size. In this way, all memory accesses for the
+parallelized loop are contiguous and no memory bandwidth is wasted.</para><code id="uid28" display="block" class="listing">  for(k=0;k&lt;N/2;k+=4) {
+    __m128 Ok_re = _mm_load_ps((float *)&amp;out[k+N/2]);
+    __m128 Ok_im = _mm_load_ps((float *)&amp;out[k+N/2+2]);
+    __m128 w_re = _mm_load_ps((float *)&amp;LUT[log2stride][k]);
+    __m128 w_im = _mm_load_ps((float *)&amp;LUT[log2stride][k+2]);
+    __m128 Ek_re = _mm_load_ps((float *)&amp;out[k]);
+    __m128 Ek_im = _mm_load_ps((float *)&amp;out[k+2]);
+    __m128 wOk_re =
+      _mm_sub_ps(_mm_mul_ps(Ok_re,w_re),_mm_mul_ps(Ok_im,w_im));
+    __m128 wOk_im =
+      _mm_add_ps(_mm_mul_ps(Ok_re,w_im),_mm_mul_ps(Ok_im,w_re));
+    _mm_store_ps((float *)(out+k), _mm_add_ps(Ek_re, wOk_re));
+    _mm_store_ps((float *)(out+k+2), _mm_add_ps(Ek_im, wOk_im));
+    _mm_store_ps((float *)(out+k+N/2), _mm_sub_ps(Ek_re, wOk_re));
+    _mm_store_ps((float *)(out+k+N/2+2), _mm_sub_ps(Ek_im, wOk_im));
+  }
+<caption>Vectorized inner loop of Cooley-Tukey radix-2 FFT</caption></code>
+        <para id="id264214"><link target-id="uid28"/> computes the loop of <link target-id="uid27"/> using split format data and a vector length of four
+(i.e., it computes four iterations at once). Note that the vector load and
+store operations used in <link target-id="uid28"/> require that the
+memory accesses are 16-byte aligned – this is a fairly standard proviso for
+vector memory operations, and use of the correct memory alignment attributes
+and/or memory allocation routines ensures that memory is always correctly
+aligned.</para><para id="id264237">Some FFT libraries require the input to be in split format (i.e., the real
+parts of each element are stored in one contiguous array, while the imaginary
+parts are stored contiguously in another array) for the purposes of simplifying
+the computation, but this conflicts with many other libraries and use cases of
+the FFT – for example, Apple's vDSP library operates in split format, but
+many examples require the use of un-zip/zip functions on the input/output data
+(see Usage Case 2: Fast Fourier Transforms in <link target-id="bid5"/>).
+A compromise is to convert interleaved format data to split format on the first
+pass of the FFT, computing most of the FFT with split format
+sub-transforms, and converting the data back to interleaved format as it is
+processed on the last pass.</para>
+        <figure id="uid29">
+          <media id="uid29_media" alt="">
+            <image mime-type="image/png" src="../../media/simple-lut2.png" id="uid29_onlineimage" width="480"><!-- NOTE: attribute width changes image size online (pixels). original width is 480. --></image>
+            <image mime-type="application/postscript" for="pdf" src="../../media/simple-lut2.eps" id="uid29_printimage" print-width="0.7">
+              <!--NOTE: attribute width changes image size in printed PDF (if specified in .tex file)-->
+            </image>
+          </media>
+          <caption>Speed of FFTs with vectorized loops</caption>
+        </figure>
+        <para id="id264271"><link document="m43812">Appendix 3</link> contains listings of FFTs with vectorized loops.
+The input and output of the FFTs is in interleaved format, but the
+computation of the inner loops is performed on split format data. At the leaves
+of the transform there are no loops, so the computation falls back to scalar
+arithmetic.</para><para id="id264279"><link target-id="uid29"/> summarizes the performance of the listings in
+<link document="m43812">Appendix 3</link>. Interestingly, the radix-2 FFT is faster than
+both the conjugate-pair and ordinary split-radix algorithms until size 4096
+transforms, and this is due to the conjugate-pair and split-radix algorithms
+being more complicated at the leaves of the computation. The radix-2 algorithm
+only has to deal with one size of sub-transform at the leaves, but the
+split-radix algorithms have to handle special cases for two sizes, and
+furthermore, a larger proportion of the computation takes place at the leaves
+with the split-radix algorithms. The conjugate-pair algorithm is again slower
+than the ordinary split-radix algorithm, which can (again) be attributed to the
+compiler's relatively degenerate code output when computing complex
+multiplication with a conjugate.</para><para id="id264296">Overall, performance improves with the use of explicit vector parallelism, but still falls short of the
+state of the art. The next section characterizes the remaining performance bottlenecks.</para>
+      </section>
+    </section>
+    <section id="cid4">
+      <title>The performance bottleneck</title>
+      <figure id="uid30">
+        <media id="uid30_media" alt="">
+          <image mime-type="image/png" src="../../media/radix2-fft64.png" id="uid30_onlineimage" width="505"><!-- NOTE: attribute width changes image size online (pixels). original width is 505. --></image>
+          <image mime-type="application/postscript" for="pdf" src="../../media/radix2-fft64.eps" id="uid30_printimage" print-width="0.7">
+            <!--NOTE: attribute width changes image size in printed PDF (if specified in .tex file)-->
+          </image>
+        </media>
+        <caption>Memory access pattern of straight line blocks of code in a size 64 radix-2 FFT</caption>
+      </figure>
+      <para id="id264326">The memory access patterns of an FFT are the biggest obstacle to
+performance on modern microprocessors. To illustrate this point, <link target-id="uid30"/> visualizes the memory accesses of each straight line
+block of code in a size 64 radix-2 DIT FFT (the source code of which
+is provided in <link document="m43812">Appendix 3</link>).</para><para id="id264341">The vertical axis of <link target-id="uid30"/> is memory. Because the diagram depicts a size 64 transform there are 64
+rows, each corresponding to a complex word in memory. Because the
+transform is out-of-place, there are input and output arrays for the data. The input array contains the
+data “in time”, while the output array contains the result “in
+frequency”. Rather than show 128 rows – 64 for the input and 64 for
+the output – the input array's address space has been aliased over the output array's
+address space, where the orange code indicates an access to the input array and the green and
+blue codes for accesses to the output array.</para>
+      <para id="id264358">Each column along the horizontal axis represents the memory accesses
+sampled at each kernel (i.e., butterfly) of the computation, which are all straight line blocks of code. The first column shows two orange and one
+blue memory operations, and these correspond to a radix-2 computation at the
+leaves reading two elements from the input data, and writing two
+elements into the output array.
+The second column shows a similar radix-2 computation at the leaves: two elements of data are read from the input at addresses 18 and 48, the size 2
+DFT computed, and the results written to the output array at addresses
+2 and 3.</para>
+      <para id="id264366">There are columns that do not indicate accesses to the input
+array, and these are the blocks that are not at the leaves of the computation. They load data from some
+locations in the output, performing the computation, and store the
+data back to the same locations in the output array.</para>
+      <para id="id264372">There are two problems that <link target-id="uid30"/> illustrates. The first is that the accesses to the input array – the samples “in time" – are indeed very decimated, as might be expected with a decimation-in-time algorithm. Second, it can be
+observed that the leaves of the computation are rather inefficient, because there are large numbers of
+straight line blocks of code performing scalar memory accesses, and no loops of more than a few iterations (i.e., the leaves of the computation
+are not taking advantage of the machine's SIMD capability).</para>
+      <para id="id264386"><link target-id="uid29"/> in the previous section showed that the
+vectorized radix-2 FFT was faster than the split-radix algorithms up to size
+4096 transforms; a comparison between <link target-id="uid30"/> and <link target-id="uid31"/> helps explain this phenomenon. The split-radix algorithm
+spends more time computing the leaves of the computation (blue), so despite the
+split-radix algorithms being more efficient in the inner loops of SIMD
+computation, the performance has been held back by higher proportion of very
+small straight line blocks of code (corresponding to sub-transforms smaller
+than size 4) performing scalar memory accesses at the leaves of the
+computation.</para>
+      <para id="id264409">Because the addresses of memory operations at the leaves are a function of
+variables passed on the stack, it is very difficult for a hardware prefetch
+unit to keep these leaves supplied with data, and thus memory latency becomes
+an issue. In later chapters, it is shown that increasing the size of the base
+cases at the leaves improves performance.</para>
+      <figure id="uid31">
+        <media id="uid31_media" alt="">
+          <image mime-type="image/png" src="../../media/splitfft64.png" id="uid31_onlineimage" width="464"><!-- NOTE: attribute width changes image size online (pixels). original width is 464. --></image>
+          <image mime-type="application/postscript" for="pdf" src="../../media/splitfft64.eps" id="uid31_printimage" print-width="0.7">
+            <!--NOTE: attribute width changes image size in printed PDF (if specified in .tex file)-->
+          </image>
+        </media>
+        <caption>Memory access pattern of straight line blocks of code in a size 64 split-radix FFT</caption>
+      </figure>
+    </section>
+  </content>
+  <bib:file>
+    <bib:entry id="bid3">
+      <bib:article>
+        <!--required fields-->
+        <bib:author>Cooley, J.W. and Tukey, J.W.</bib:author>
+        <bib:title>An Algorithm for the Machine Calculation of Complex Fourier Series</bib:title>
+        <bib:journal>Mathematics of Computation</bib:journal>
+        <bib:year>1965</bib:year>
+        <!--optional fields-->
+        <bib:volume>19</bib:volume>
+        <bib:number>90</bib:number>
+        <bib:pages>297–301</bib:pages>
+        <bib:month/>
+        <bib:note/>
+      </bib:article>
+    </bib:entry>
+    <bib:entry id="bid2">
+      <bib:article>
+        <!--required fields-->
+        <bib:author>Danielson, G.C. and Lanczos, C.</bib:author>
+        <bib:title>Some improvements in practical Fourier analysis and their application to X-ray scattering from liquids</bib:title>
+        <bib:journal>Journal of the Franklin Institute</bib:journal>
+        <bib:year>1942</bib:year>
+        <!--optional fields-->
+        <bib:volume>233</bib:volume>
+        <bib:number>5</bib:number>
+        <bib:pages>435–452</bib:pages>
+        <bib:month/>
+        <bib:note/>
+      </bib:article>
+    </bib:entry>
+    <bib:entry id="bid1">
+      <bib:incollection>
+        <!--required fields-->
+        <bib:author>Johnson, S. G. and Frigo, M.</bib:author>
+        <bib:title>Implementing FFTs in practice</bib:title>
+        <bib:booktitle>Fast Fourier Transforms</bib:booktitle>
+        <bib:publisher>Rice University</bib:publisher>
+        <bib:year>2008</bib:year>
+        <!--optional fields-->
+        <bib:editor/>
+        <bib:number/>
+        <bib:series>Connexions</bib:series>
+        <bib:type/>
+        <bib:chapter>11</bib:chapter>
+        <bib:pages/>
+        <bib:address>Houston TX</bib:address>
+        <bib:edition/>
+        <bib:month>September</bib:month>
+        <bib:note/>
+      </bib:incollection>
+    </bib:entry>
+    <bib:entry id="bid4">
+      <bib:article>
+        <!--required fields-->
+        <bib:author>Pitkanen, T. and Makinen, R. and Heikkinen, J. and Partanen, T. and Takala, J.</bib:author>
+        <bib:title>Low-power, high-performance TTA processor for 1024-point fast Fourier transform</bib:title>
+        <bib:journal>Embedded Computer Systems: Architectures, Modeling, and Simulation</bib:journal>
+        <bib:year>2006</bib:year>
+        <!--optional fields-->
+        <bib:volume/>
+        <bib:number/>
+        <bib:pages>227–236</bib:pages>
+        <bib:month/>
+        <bib:note/>
+      </bib:article>
+    </bib:entry>
+    <bib:entry id="bid0">
+      <bib:article>
+        <!--required fields-->
+        <bib:author>Singleton, Richard C.</bib:author>
+        <bib:title>On computing the fast Fourier transform</bib:title>
+        <bib:journal>Commun. ACM</bib:journal>
+        <bib:year>1967</bib:year>
+        <!--optional fields-->
+        <bib:volume>10</bib:volume>
+        <bib:number/>
+        <bib:pages>647–654</bib:pages>
+        <bib:month>October</bib:month>
+        <bib:note/>
+      </bib:article>
+    </bib:entry>
+  </bib:file>
+</document>

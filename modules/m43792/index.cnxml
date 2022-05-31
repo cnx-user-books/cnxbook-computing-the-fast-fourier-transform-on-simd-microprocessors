@@ -1,0 +1,727 @@
+<document xmlns="http://cnx.rice.edu/cnxml" xmlns:m="http://www.w3.org/1998/Math/MathML" xmlns:bib="http://bibtexml.sf.net/">
+  <title>Introduction</title>
+<metadata xmlns:md="http://cnx.rice.edu/mdml">
+  <md:content-id>m43792</md:content-id>
+  <md:title>Introduction</md:title>
+  <md:abstract/>
+  <md:uuid>b1f561e0-b7fc-4d50-be91-baa5f728d3c1</md:uuid>
+</metadata>
+
+<content>
+    <para id="id322490">In 1990, it was estimated that Cray Research's installed base of approximately 200 machines spent 40% of all CPU cycles computing the fast Fourier transform (FFT) <link target-id="bid0"/>. With each machine worth about USD$25 million, the performance of the FFT was of prime importance.</para>
+    <para id="id322506">Today, use of the FFT is even more pervasive, and it is counted among the
+10 algorithms that have had the greatest influence on the development and
+practice of science and engineering in the 20<sup>th</sup>
+century <link target-id="bid1"/>. Huge numbers of mobile smartphones, tablets
+and PCs <link target-id="bid2"/>, <link target-id="bid3"/>, most of which are
+equipped with single-instruction, multiple-data (SIMD) <link target-id="bid4"/>, <link target-id="bid5"/> microprocessors,
+compute the FFT on a large scale for a plethora of sound, video and image
+processing applications. In the space of a few years, mobile applications have
+become a part of many people's everyday lives <link target-id="bid6"/>.</para>
+    <para id="id322892">This thesis shows that the key to optimizing the performance of the split-radix
+FFT algorithms on SIMD microprocessors is latency and spatial
+locality optimizations, and in some cases, a variant of the split-radix
+FFT called the conjugate-pair
+algorithm <link target-id="bid7"/>, <link target-id="bid8"/>, <link target-id="bid9"/>, <link target-id="bid10"/>.
+It is also shown that extensive machine specific calibration may be
+superfluous.</para>
+    <section id="cid1">
+      <title>Hypotheses</title>
+      <para id="id322929">FFTW <link target-id="bid11"/>, <link target-id="bid12"/>, <link target-id="bid13"/>,
+SPIRAL <link target-id="bid14"/>, <link target-id="bid15"/>, <link target-id="bid16"/> and
+UHFFT <link target-id="bid17"/>, <link target-id="bid18"/>, <link target-id="bid19"/>, <link target-id="bid20"/>, <link target-id="bid21"/>
+are state of the art FFT libraries that employ automatic empirical
+optimization. SPIRAL automatically performs machine-specific optimizations at
+compile time, and FFTW and UHFFT automatically adapt to a machine at run-time.
+Aside from the use of automatic optimization, a common denominator among these
+libraries is the use of large straight line blocks of code and optimized memory
+locality.</para>
+      <para id="id322993">The hypotheses outlined below test whether good heuristics and model-based optimization can be used in the place of automatic empirical optimization.</para>
+      <section id="id322997">
+        <title>Hypothesis 1: Accessing memory in sequential “streams” is critical for best performance</title>
+        <para id="id323005">Large FFT exhibit poor temporal locality, and when computing these
+transforms on microprocessor based systems that feature a cache, best
+performance is typically achieved when “streaming” sequential data through
+the CPU. Hypothesis 1 is tested in <link document="m43793">Implementation Details</link> with
+replicated coefficient lookup tables that trade-off increased memory size for
+better spatial locality, and in <link document="m43791">Streaming FFT</link> by topologically sorting
+a directed acyclic graph (DAG) of sub-transforms to again improve spatial locality.</para></section>
+      <section id="id323018">
+        <title>Hypothesis 2: The conjugate-pair algorithm is faster than the ordinary split-radix algorithm</title>
+        <para id="id323025">Hypothesis 2 is based on the idea that memory bandwidth is a bottleneck, and on
+the fact that the conjugate-pair algorithm requires only half the number of
+twiddle factor loads. This hypothesis is tested in
+<link document="m43790" target-id="cid6">Split-radix vs. conjugate-pair</link>, where a highly optimized
+implementation of the conjugate-pair algorithm is benchmarked against an
+equally highly optimized implementation of the ordinary split-radix algorithm.</para></section>
+      <section id="id323032">
+        <title>Hypothesis 3: The performance of an FFT can be predicted based on characteristics of the underlying machine and the compiler</title>
+        <para id="id323040">Exploratory experiments suggest that good results can be obtained without
+empirical techniques, and that certain parameters can be predicted based on the
+characteristics of the underlying machine and the compiler used. Hypothesis 3
+is tested in <link document="m43790">Results and Discussion</link> by building a model that predicts
+performance, and by benchmarking FFTW against an implementation that does not
+require extensive calibration, on 18 different machines.</para></section>
+    </section>
+    <section id="cid2">
+      <title>Scope</title>
+      <para id="id323060">In investigating the hypotheses, the scope of this work has been limited in several ways:</para>
+      <list id="id323064" display="block" list-type="enumerated">
+        <item id="uid1">It is limited to single-threaded complex 1D FFTs, because
+multi-dimensional, multi-threaded or multi-processor FFTs (or any
+combination thereof) are ultimately decomposed into 1D components running on
+a single core, and all other things being equal, it is the performance of
+these 1D components running on a single microprocessor core that determines
+the overall performance of a given multi-threaded implementation;
+</item>
+        <item id="uid2">It is limited to transforms that operate on vectors of length <m:math overflow="scroll"><m:msup><m:mn>2</m:mn><m:mi>m</m:mi></m:msup></m:math>
+where <m:math overflow="scroll"><m:mrow><m:mi>m</m:mi><m:mo>∈</m:mo><m:msup><m:mi mathvariant="double-struck">N</m:mi><m:mn>0</m:mn></m:msup></m:mrow></m:math>, because these are the easiest to compute on
+machines, and consequently the most often used by applications. This excludes
+the prime-factor algorithm <link target-id="bid22"/>, <link target-id="bid23"/>,
+and the Radar <link target-id="bid24"/> and
+Bluestein <link target-id="bid25"/>, <link target-id="bid22"/>, <link target-id="bid26"/>
+algorithms for prime sizes;
+</item>
+        <item id="uid3">It is limited to the
+split-radix <link target-id="bid27"/>, <link target-id="bid28"/>, <link target-id="bid29"/>, <link target-id="bid30"/>, <link target-id="bid31"/>
+and
+conjugate-pair <link target-id="bid7"/>, <link target-id="bid8"/>, <link target-id="bid9"/>, <link target-id="bid10"/>
+algorithms. The Winograd
+algorithm <link target-id="bid32"/>, <link target-id="bid28"/>, <link target-id="bid33"/>, <link target-id="bid34"/>
+is excluded because of its low performance on systems where multiplication
+costs about the same as addition;
+</item>
+        <item id="uid4">It is limited to out-of-place transforms, because they are generally
+faster than in-place transforms, except at the boundaries of the
+cache <link target-id="bid35"/>;
+</item>
+        <item id="uid5">The benchmark experiments are limited to the Intel x86 and ARM
+machines, because it is estimated that 92% of the microprocessors in the
+rapidly expanding mobile market are ARM devices <link target-id="bid3"/>, while
+Intel's share of the worldwide PC and mobile PC microprocessors markets is
+estimated to be 79.3% and 84.4%,
+respectively <link target-id="bid2"/>.
+</item>
+      </list>
+    </section>
+    <section id="cid3">
+      <title>Contributions</title>
+      <para id="id323300">The contributions of this work are summarized as follows:</para>
+      <list id="id323304" display="block" list-type="enumerated"><item id="uid6">Three methods of computing the conjugate-pair algorithm on SIMD
+microprocessors are described in <link document="m43791">Streaming FFT</link>;
+</item>
+        <item id="uid7">The source code for the high-performance SIMD FFT library
+developed in this thesis is publicly available under a permissive open source
+licence <link url="http://github.com/anthonix/sfft" window="new"> on github.</link>
+</item>
+      </list></section>
+    <section id="cid4"><title>Organization</title><para id="id323343">This work is divided into two parts. The first part,
+Chapters 1-4, encompasses the
+relevant background, while the second part,
+Chapters 5-8, is concerned with
+contributions that challenge the state of the art.</para><para id="id323348">A brief overview of the contents of each chapter:</para>
+      <list id="id323352" display="block" start-value="2" list-type="enumerated"><item id="uid8"><link document="m43799">Algorithms</link> provides an overview of FFT algorithms from the mathematical perspective;
+</item>
+        <item id="uid9"><link document="m43793">Implementation details</link> complements the mathematical perspective
+of the previous chapter with a more focused view of the low level details
+that are relevant to efficient implementation on SIMD microprocessors;
+</item>
+        <item id="uid10"><link document="m43809">Existing libraries</link> reviews existing state of the art libraries,
+with reference to algorithms and implementation details of the previous
+chapters;
+</item>
+        <item id="uid11"><link document="m43791">Streaming FFT</link> describes SFFT, a library for
+SIMD microprocessors that is, in many cases, faster than the state of
+the art FFT libraries reviewed in <link document="m43809">Existing libraries</link>;
+</item>
+        <item id="uid12"><link document="m43804">Benchmark methods</link> describes the benchmarking methods used to
+evaluate performance and accuracy of various FFT implementations throughout
+this work;
+</item>
+        <item id="uid13"><link document="m43790">Results and discussion</link> presents the results of benchmarks on 18
+different machines, as well as the results of model-based optimization
+experiments, with reference to earlier chapters and other related work;
+</item>
+        <item id="uid14"><link document="m43808">Conclusions and future work</link> concludes the work with a review of
+the hypotheses, a summary of the contributions, and some idea for directions
+that future work might take.
+</item>
+      </list></section></content>
+  <bib:file>
+    <bib:entry id="bid19">
+      <bib:article>
+        <!--required fields-->
+        <bib:author>Ali, A. and Johnsson, L.</bib:author>
+        <bib:title>UHFFT: A High Performance DFT Framework</bib:title>
+        <bib:journal/>
+        <bib:year>2006</bib:year>
+        <!--optional fields-->
+        <bib:volume/>
+        <bib:number/>
+        <bib:pages/>
+        <bib:month/>
+        <bib:note/>
+      </bib:article>
+    </bib:entry>
+    <bib:entry id="bid17">
+      <bib:inproceedings>
+        <!--required fields-->
+        <bib:author>Ali, A. and Johnsson, L. and Mirkovic, D.</bib:author>
+        <bib:title>Empirical Auto-tuning Code Generator for FFT and Trignometric Transforms</bib:title>
+        <bib:booktitle>ODES: 5th Workshop on Optimizations for DSP and Embedded Systems, in conjunction with International Symposium on Code Generation and Optimization (CGO)</bib:booktitle>
+        <bib:year>2007</bib:year>
+        <!--optional fields-->
+        <bib:editor/>
+        <bib:number/>
+        <bib:series/>
+        <bib:pages/>
+        <bib:address/>
+        <bib:month/>
+        <bib:organization/>
+        <bib:publisher/>
+        <bib:note/>
+      </bib:inproceedings>
+    </bib:entry>
+    <bib:entry id="bid35">
+      <bib:article>
+        <!--required fields-->
+        <bib:author>Ali, A. and Johnsson, L. and Subhlok, J.</bib:author>
+        <bib:title>Adaptive computation of self sorting in-place FFTs on hierarchical memory architectures</bib:title>
+        <bib:journal>High Performance Computing and Communications</bib:journal>
+        <bib:year>2007</bib:year>
+        <!--optional fields-->
+        <bib:volume/>
+        <bib:number/>
+        <bib:pages>372–383</bib:pages>
+        <bib:month/>
+        <bib:note/>
+      </bib:article>
+    </bib:entry>
+    <bib:entry id="bid18">
+      <bib:inproceedings>
+        <!--required fields-->
+        <bib:author>Ali, A. and Johnsson, L. and Subhlok, J.</bib:author>
+        <bib:title>Scheduling FFT computation on SMP and multicore systems</bib:title>
+        <bib:booktitle>Proceedings of the 21st annual international conference on Supercomputing</bib:booktitle>
+        <bib:year>2007</bib:year>
+        <!--optional fields-->
+        <bib:editor/>
+        <bib:number/>
+        <bib:series/>
+        <bib:pages>293–301</bib:pages>
+        <bib:address/>
+        <bib:month/>
+        <bib:organization>ACM</bib:organization>
+        <bib:publisher/>
+        <bib:note/>
+      </bib:inproceedings>
+    </bib:entry>
+    <bib:entry id="bid25">
+      <bib:article>
+        <!--required fields-->
+        <bib:author>Bluestein, L.</bib:author>
+        <bib:title>A linear filtering approach to the computation of discrete Fourier transform</bib:title>
+        <bib:journal>Audio and Electroacoustics, IEEE Transactions on</bib:journal>
+        <bib:year>1970</bib:year>
+        <!--optional fields-->
+        <bib:volume>18</bib:volume>
+        <bib:number>4</bib:number>
+        <bib:pages>451–455</bib:pages>
+        <bib:month/>
+        <bib:note/>
+      </bib:article>
+    </bib:entry>
+    <bib:entry id="bid27">
+      <bib:article>
+        <!--required fields-->
+        <bib:author>Duhamel, P. and Hollmann, H.</bib:author>
+        <bib:title>Split radix FFT algorithm</bib:title>
+        <bib:journal>Electronics Letters</bib:journal>
+        <bib:year>1984</bib:year>
+        <!--optional fields-->
+        <bib:volume>20</bib:volume>
+        <bib:number>1</bib:number>
+        <bib:pages>14–16</bib:pages>
+        <bib:month/>
+        <bib:note/>
+      </bib:article>
+    </bib:entry>
+    <bib:entry id="bid1">
+      <bib:article>
+        <!--required fields-->
+        <bib:author>Dongarra, J. and Sullivan, F.</bib:author>
+        <bib:title>Guest Editors' Introduction: The Top 10 Algorithms</bib:title>
+        <bib:journal>Computing in Science &amp; Engineering</bib:journal>
+        <bib:year>2000</bib:year>
+        <!--optional fields-->
+        <bib:volume/>
+        <bib:number/>
+        <bib:pages>22–23</bib:pages>
+        <bib:month/>
+        <bib:note/>
+      </bib:article>
+    </bib:entry>
+    <bib:entry id="bid32">
+      <bib:article>
+        <!--required fields-->
+        <bib:author>Duhamel, P.</bib:author>
+        <bib:title>Algorithms meeting the lower bounds on the multiplicative complexity of length-2n DFTs and their connection with practical algorithms</bib:title>
+        <bib:journal>Acoustics, Speech and Signal Processing, IEEE Transactions on</bib:journal>
+        <bib:year>1990</bib:year>
+        <!--optional fields-->
+        <bib:volume>38</bib:volume>
+        <bib:number>9</bib:number>
+        <bib:pages>1504–1511</bib:pages>
+        <bib:month/>
+        <bib:note/>
+      </bib:article>
+    </bib:entry>
+    <bib:entry id="bid4">
+      <bib:article>
+        <!--required fields-->
+        <bib:author>Duncan, R.</bib:author>
+        <bib:title>A survey of parallel computer architectures</bib:title>
+        <bib:journal>Computer</bib:journal>
+        <bib:year>1990</bib:year>
+        <!--optional fields-->
+        <bib:volume>23</bib:volume>
+        <bib:number>2</bib:number>
+        <bib:pages>5–16</bib:pages>
+        <bib:month/>
+        <bib:note/>
+      </bib:article>
+    </bib:entry>
+    <bib:entry id="bid28">
+      <bib:article>
+        <!--required fields-->
+        <bib:author>Duhamel, P. and Vetterli, M.</bib:author>
+        <bib:title>Fast Fourier transforms: a tutorial review and a state of the art</bib:title>
+        <bib:journal>Signal Processing</bib:journal>
+        <bib:year>1990</bib:year>
+        <!--optional fields-->
+        <bib:volume>19</bib:volume>
+        <bib:number>4</bib:number>
+        <bib:pages>259–299</bib:pages>
+        <bib:month/>
+        <bib:note/>
+      </bib:article>
+    </bib:entry>
+    <bib:entry id="bid3">
+      <bib:article>
+        <!--required fields-->
+        <bib:author>Fitzpatrick, Jason</bib:author>
+        <bib:title>An Interview with Steve Furber</bib:title>
+        <bib:journal>Communications of the ACM</bib:journal>
+        <bib:year>2011</bib:year>
+        <!--optional fields-->
+        <bib:volume>54</bib:volume>
+        <bib:number>5</bib:number>
+        <bib:pages>34-39</bib:pages>
+        <bib:month/>
+        <bib:note/>
+      </bib:article>
+    </bib:entry>
+    <bib:entry id="bid12">
+      <bib:article>
+        <!--required fields-->
+        <bib:author>Frigo, M. and Johnson, S.G.</bib:author>
+        <bib:title>The design and implementation of FFTW3</bib:title>
+        <bib:journal>Proceedings of the IEEE</bib:journal>
+        <bib:year>2005</bib:year>
+        <!--optional fields-->
+        <bib:volume>93</bib:volume>
+        <bib:number>2</bib:number>
+        <bib:pages>216–231</bib:pages>
+        <bib:month/>
+        <bib:note/>
+      </bib:article>
+    </bib:entry>
+    <bib:entry id="bid5">
+      <bib:article>
+        <!--required fields-->
+        <bib:author>Flynn, M.J.</bib:author>
+        <bib:title>Some computer organizations and their effectiveness</bib:title>
+        <bib:journal>Computers, IEEE Transactions on</bib:journal>
+        <bib:year>1972</bib:year>
+        <!--optional fields-->
+        <bib:volume>100</bib:volume>
+        <bib:number>9</bib:number>
+        <bib:pages>948–960</bib:pages>
+        <bib:month/>
+        <bib:note/>
+      </bib:article>
+    </bib:entry>
+    <bib:entry id="bid11">
+      <bib:inproceedings>
+        <!--required fields-->
+        <bib:author>Frigo, M.</bib:author>
+        <bib:title>A fast Fourier transform compiler</bib:title>
+        <bib:booktitle>ACM SIGPLAN Notices</bib:booktitle>
+        <bib:year>1999</bib:year>
+        <!--optional fields-->
+        <bib:editor/>
+        <bib:volume>34</bib:volume>
+        <bib:series/>
+        <bib:pages>169–180</bib:pages>
+        <bib:address/>
+        <bib:month/>
+        <bib:organization>ACM</bib:organization>
+        <bib:publisher/>
+        <bib:note/>
+      </bib:inproceedings>
+    </bib:entry>
+    <bib:entry id="bid14">
+      <bib:inproceedings>
+        <!--required fields-->
+        <bib:author>Franchetti, F. and Voronenko, Y. and Puschel, M.</bib:author>
+        <bib:title>FFT program generation for shared memory: SMP and multicore</bib:title>
+        <bib:booktitle>SC 2006 Conference, Proceedings of the ACM/IEEE</bib:booktitle>
+        <bib:year>2006</bib:year>
+        <!--optional fields-->
+        <bib:editor/>
+        <bib:number/>
+        <bib:series/>
+        <bib:pages>51–51</bib:pages>
+        <bib:address/>
+        <bib:month/>
+        <bib:organization>IEEE</bib:organization>
+        <bib:publisher/>
+        <bib:note/>
+      </bib:inproceedings>
+    </bib:entry>
+    <bib:entry id="bid7">
+      <bib:article>
+        <!--required fields-->
+        <bib:author>Gopinath, R. A.</bib:author>
+        <bib:title>Conjugate pair fast Fourier transform</bib:title>
+        <bib:journal>Electronics Letters</bib:journal>
+        <bib:year>1989</bib:year>
+        <!--optional fields-->
+        <bib:volume>25</bib:volume>
+        <bib:number/>
+        <bib:pages>1084</bib:pages>
+        <bib:month/>
+        <bib:note/>
+      </bib:article>
+    </bib:entry>
+    <bib:entry id="bid6">
+      <bib:article>
+        <!--required fields-->
+        <bib:author>Garg, R. and Telang, R.</bib:author>
+        <bib:title>Estimating App Demand from Publicly Available Data</bib:title>
+        <bib:journal/>
+        <bib:year>2011</bib:year>
+        <!--optional fields-->
+        <bib:volume/>
+        <bib:number/>
+        <bib:pages/>
+        <bib:month/>
+        <bib:note/>
+      </bib:article>
+    </bib:entry>
+    <bib:entry id="bid33">
+      <bib:article>
+        <!--required fields-->
+        <bib:author>Heideman, M. and Burrus, C.</bib:author>
+        <bib:title>On the number of multiplications necessary to compute a length-2n DFT</bib:title>
+        <bib:journal>Acoustics, Speech and Signal Processing, IEEE Transactions on</bib:journal>
+        <bib:year>1986</bib:year>
+        <!--optional fields-->
+        <bib:volume>34</bib:volume>
+        <bib:number>1</bib:number>
+        <bib:pages>91–95</bib:pages>
+        <bib:month/>
+        <bib:note/>
+      </bib:article>
+    </bib:entry>
+    <bib:entry id="bid13">
+      <bib:incollection>
+        <!--required fields-->
+        <bib:author>Johnson, S. G. and Frigo, M.</bib:author>
+        <bib:title>Implementing FFTs in practice</bib:title>
+        <bib:booktitle>Fast Fourier Transforms</bib:booktitle>
+        <bib:publisher>Rice University</bib:publisher>
+        <bib:year>2008</bib:year>
+        <!--optional fields-->
+        <bib:editor/>
+        <bib:number/>
+        <bib:series>Connexions</bib:series>
+        <bib:type/>
+        <bib:chapter>11</bib:chapter>
+        <bib:pages/>
+        <bib:address>Houston TX</bib:address>
+        <bib:edition/>
+        <bib:month>September</bib:month>
+        <bib:note/>
+      </bib:incollection>
+    </bib:entry>
+    <bib:entry id="bid0">
+      <bib:inproceedings>
+        <!--required fields-->
+        <bib:author>Johnson, JR and Johnson, RW</bib:author>
+        <bib:title>Challenges of computing the fast Fourier transform</bib:title>
+        <bib:booktitle>DARPA Conference</bib:booktitle>
+        <bib:year>1997</bib:year>
+        <!--optional fields-->
+        <bib:editor/>
+        <bib:number/>
+        <bib:series/>
+        <bib:pages/>
+        <bib:address/>
+        <bib:month/>
+        <bib:organization>Citeseer</bib:organization>
+        <bib:publisher/>
+        <bib:note/>
+      </bib:inproceedings>
+    </bib:entry>
+    <bib:entry id="bid8">
+      <bib:article>
+        <!--required fields-->
+        <bib:author>Kamar, I. and Elcherif, Y.</bib:author>
+        <bib:title>Conjugate pair fast Fourier transform</bib:title>
+        <bib:journal>Electronics Letters</bib:journal>
+        <bib:year>1989</bib:year>
+        <!--optional fields-->
+        <bib:volume>25</bib:volume>
+        <bib:number/>
+        <bib:pages>324</bib:pages>
+        <bib:month/>
+        <bib:note/>
+      </bib:article>
+    </bib:entry>
+    <bib:entry id="bid9">
+      <bib:article>
+        <!--required fields-->
+        <bib:author>Krot, A. M. and Minervina, H. B.</bib:author>
+        <bib:title>Conjugate pair fast Fourier transform</bib:title>
+        <bib:journal>Electronics Letters</bib:journal>
+        <bib:year>1992</bib:year>
+        <!--optional fields-->
+        <bib:volume>28</bib:volume>
+        <bib:number/>
+        <bib:pages>1143</bib:pages>
+        <bib:month/>
+        <bib:note/>
+      </bib:article>
+    </bib:entry>
+    <bib:entry id="bid29">
+      <bib:article>
+        <!--required fields-->
+        <bib:author>Martens, J.B.</bib:author>
+        <bib:title>Recursive cyclotomic factorization–A new algorithm for calculating the discrete Fourier transform</bib:title>
+        <bib:journal>Acoustics, Speech and Signal Processing, IEEE Transactions on</bib:journal>
+        <bib:year>1984</bib:year>
+        <!--optional fields-->
+        <bib:volume>32</bib:volume>
+        <bib:number>4</bib:number>
+        <bib:pages>750–761</bib:pages>
+        <bib:month/>
+        <bib:note/>
+      </bib:article>
+    </bib:entry>
+    <bib:entry id="bid2">
+      <bib:article>
+        <!--required fields-->
+        <bib:author>McGrath, Dylan</bib:author>
+        <bib:title>IDC cuts PC microprocessor forecast</bib:title>
+        <bib:journal>EETimes</bib:journal>
+        <bib:year>2011</bib:year>
+        <!--optional fields-->
+        <bib:volume/>
+        <bib:number/>
+        <bib:pages/>
+        <bib:month>September</bib:month>
+        <bib:note/>
+      </bib:article>
+    </bib:entry>
+    <bib:entry id="bid21">
+      <bib:article>
+        <!--required fields-->
+        <bib:author>Mirkovic, D. and Johnsson, S.L.</bib:author>
+        <bib:title>Automatic performance tuning in the UHFFT library</bib:title>
+        <bib:journal>Lecture notes in computer science</bib:journal>
+        <bib:year>2001</bib:year>
+        <!--optional fields-->
+        <bib:volume/>
+        <bib:number/>
+        <bib:pages>I–71</bib:pages>
+        <bib:month/>
+        <bib:note/>
+      </bib:article>
+    </bib:entry>
+    <bib:entry id="bid20">
+      <bib:inproceedings>
+        <!--required fields-->
+        <bib:author>Mirkovic, D. and Mahasoom, R. and Johnsson, L.</bib:author>
+        <bib:title>Adaptive software library for fast Fourier transforms</bib:title>
+        <bib:booktitle>2000 International Conference on Supercomputing</bib:booktitle>
+        <bib:year>2000</bib:year>
+        <!--optional fields-->
+        <bib:editor/>
+        <bib:number/>
+        <bib:series/>
+        <bib:pages>215–224</bib:pages>
+        <bib:address/>
+        <bib:month/>
+        <bib:organization/>
+        <bib:publisher/>
+        <bib:note/>
+      </bib:inproceedings>
+    </bib:entry>
+    <bib:entry id="bid22">
+      <bib:book>
+        <!--required fields-->
+        <bib:author>Oppenheim, A.V. and Schafer, R.W. and Buck, J.R.</bib:author>
+        <bib:title>Discrete-time signal processing</bib:title>
+        <bib:publisher>Prentice hall Upper Saddle River eN. JNJ</bib:publisher>
+        <bib:year>1989</bib:year>
+        <!--optional fields-->
+        <bib:volume>2</bib:volume>
+        <bib:series/>
+        <bib:address/>
+        <bib:edition/>
+        <bib:month/>
+        <bib:note/>
+      </bib:book>
+    </bib:entry>
+    <bib:entry id="bid16">
+      <bib:article>
+        <!--required fields-->
+        <bib:author>Puschel, M. and Moura, J.M.F. and Johnson, J.R. and Padua, D. and Veloso, M.M. and Singer, B.W. and Xiong, J. and Franchetti, F. and Gacic, A. and Voronenko, Y.</bib:author>
+        <bib:title>SPIRAL: Code generation for DSP transforms</bib:title>
+        <bib:journal>Proceedings of the IEEE</bib:journal>
+        <bib:year>2005</bib:year>
+        <!--optional fields-->
+        <bib:volume>93</bib:volume>
+        <bib:number>2</bib:number>
+        <bib:pages>232–275</bib:pages>
+        <bib:month/>
+        <bib:note/>
+      </bib:article>
+    </bib:entry>
+    <bib:entry id="bid15">
+      <bib:article>
+        <!--required fields-->
+        <bib:author>Puschel, M. and Moura, J.M.F. and Singer, B. and Xiong, J. and Johnson, J. and Padua, D. and Veloso, M. and Johnson, R.W.</bib:author>
+        <bib:title>SPIRAL: A generator for platform-adapted libraries of signal processing alogorithms</bib:title>
+        <bib:journal>International Journal of High Performance Computing Applications</bib:journal>
+        <bib:year>2004</bib:year>
+        <!--optional fields-->
+        <bib:volume>18</bib:volume>
+        <bib:number>1</bib:number>
+        <bib:pages>21</bib:pages>
+        <bib:month/>
+        <bib:note/>
+      </bib:article>
+    </bib:entry>
+    <bib:entry id="bid10">
+      <bib:article>
+        <!--required fields-->
+        <bib:author>Qian, H-S. and Zhao, Z-J.</bib:author>
+        <bib:title>Conjugate pair fast Fourier transform</bib:title>
+        <bib:journal>Electronics Letters</bib:journal>
+        <bib:year>1990</bib:year>
+        <!--optional fields-->
+        <bib:volume>26</bib:volume>
+        <bib:number/>
+        <bib:pages>541</bib:pages>
+        <bib:month/>
+        <bib:note/>
+      </bib:article>
+    </bib:entry>
+    <bib:entry id="bid24">
+      <bib:article>
+        <!--required fields-->
+        <bib:author>Rader, C.M.</bib:author>
+        <bib:title>Discrete Fourier transforms when the number of data samples is prime</bib:title>
+        <bib:journal>Proceedings of the IEEE</bib:journal>
+        <bib:year>1968</bib:year>
+        <!--optional fields-->
+        <bib:volume>56</bib:volume>
+        <bib:number>6</bib:number>
+        <bib:pages>1107–1108</bib:pages>
+        <bib:month/>
+        <bib:note/>
+      </bib:article>
+    </bib:entry>
+    <bib:entry id="bid26">
+      <bib:article>
+        <!--required fields-->
+        <bib:author>Rabiner, L. and Schafer, R. and Rader, C.</bib:author>
+        <bib:title>The chirp z-transform algorithm</bib:title>
+        <bib:journal>Audio and Electroacoustics, IEEE Transactions on</bib:journal>
+        <bib:year>1969</bib:year>
+        <!--optional fields-->
+        <bib:volume>17</bib:volume>
+        <bib:number>2</bib:number>
+        <bib:pages>86–92</bib:pages>
+        <bib:month/>
+        <bib:note/>
+      </bib:article>
+    </bib:entry>
+    <bib:entry id="bid23">
+      <bib:article>
+        <!--required fields-->
+        <bib:author>Temperton, C.</bib:author>
+        <bib:title>Note on prime factor FFT algorithms</bib:title>
+        <bib:journal>J. Comput. Phys.</bib:journal>
+        <bib:year>1983</bib:year>
+        <!--optional fields-->
+        <bib:volume>1</bib:volume>
+        <bib:number/>
+        <bib:pages/>
+        <bib:month/>
+        <bib:note/>
+      </bib:article>
+    </bib:entry>
+    <bib:entry id="bid30">
+      <bib:article>
+        <!--required fields-->
+        <bib:author>Vetterli, M. and Nussbaumer, H.J.</bib:author>
+        <bib:title>Simple FFT and DCT algorithms with reduced number of operations</bib:title>
+        <bib:journal>Signal Processing</bib:journal>
+        <bib:year>1984</bib:year>
+        <!--optional fields-->
+        <bib:volume>6</bib:volume>
+        <bib:number>4</bib:number>
+        <bib:pages>267–278</bib:pages>
+        <bib:month/>
+        <bib:note/>
+      </bib:article>
+    </bib:entry>
+    <bib:entry id="bid34">
+      <bib:article>
+        <!--required fields-->
+        <bib:author>Winograd, S.</bib:author>
+        <bib:title>On computing the discrete Fourier transform</bib:title>
+        <bib:journal>Mathematics of Computation</bib:journal>
+        <bib:year>1978</bib:year>
+        <!--optional fields-->
+        <bib:volume>32</bib:volume>
+        <bib:number>141</bib:number>
+        <bib:pages>175–199</bib:pages>
+        <bib:month/>
+        <bib:note/>
+      </bib:article>
+    </bib:entry>
+    <bib:entry id="bid31">
+      <bib:conference>
+        <!--required fields-->
+        <bib:author>Yavne, R.</bib:author>
+        <bib:title>An economical method for calculating the discrete Fourier transform</bib:title>
+        <bib:booktitle>Proceedings of the December 9-11, 1968, fall joint computer conference, part I</bib:booktitle>
+        <bib:year>1968</bib:year>
+        <!--optional fields-->
+        <bib:editor/>
+        <bib:number/>
+        <bib:series/>
+        <bib:pages>115–125</bib:pages>
+        <bib:address/>
+        <bib:month/>
+        <bib:organization>ACM</bib:organization>
+        <bib:publisher/>
+        <bib:note/>
+      </bib:conference>
+    </bib:entry>
+  </bib:file>
+</document>

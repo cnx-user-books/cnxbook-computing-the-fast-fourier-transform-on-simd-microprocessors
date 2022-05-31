@@ -1,0 +1,600 @@
+<document xmlns="http://cnx.rice.edu/cnxml" xmlns:m="http://www.w3.org/1998/Math/MathML" xmlns:bib="http://bibtexml.sf.net/">
+  <title>Results and Discussion</title>
+<metadata xmlns:md="http://cnx.rice.edu/mdml">
+  <md:content-id>m43790</md:content-id>
+  <md:title>Results and Discussion</md:title>
+  <md:abstract/>
+  <md:uuid>da8ae9b7-b74b-4e73-86ee-87dce41a2294</md:uuid>
+</metadata>
+
+<content>
+    <para id="id140018">In order to test the hypotheses set out in <link document="m43792">Introduction</link>, SFFT was benchmarked alongside FFTW and other libraries on a wide range of machines, as per the methods set out in <link document="m43804">Benchmark methods</link>. The majority of the data was collected on Linux
+machines populated with SSE capable Intel microprocessors, with some additional
+data collected on small set of AVX and ARM NEON machines. The results are divided into
+three sections: speed, accuracy and setup time, with an additional section detailing a model that predicts SFFT's performance for different configurations. Finally, the chapter concludes by relating the results to other work.</para><table id="uid1" summary="">
+      <tgroup cols="4">
+        <tbody>
+          <row>
+            <entry>Modelstring</entry>
+            <entry>L1d</entry>
+            <entry>L2</entry>
+            <entry>L3</entry>
+          </row>
+          <row>
+            <entry>Intel(R) Pentium(R) 4 CPU 2.80GHz</entry>
+            <entry>16</entry>
+            <entry>512</entry>
+            <entry>-</entry>
+          </row>
+          <row>
+            <entry>Intel(R) Pentium(R) D CPU 3.00GHz</entry>
+            <entry>16</entry>
+            <entry>1024</entry>
+            <entry>-</entry>
+          </row>
+          <row>
+            <entry>Intel(R) Pentium(R) M processor 1000MHz</entry>
+            <entry>32</entry>
+            <entry>1024</entry>
+            <entry>-</entry>
+          </row>
+          <row>
+            <entry>Intel(R) Xeon(TM) CPU 2.40GHz</entry>
+            <entry>16</entry>
+            <entry>2048</entry>
+            <entry>-</entry>
+          </row>
+          <row>
+            <entry>Intel(R) Xeon(R) CPU E5335 @ 2.00GHz</entry>
+            <entry>32</entry>
+            <entry>4096</entry>
+            <entry>-</entry>
+          </row>
+          <row>
+            <entry>Intel(R) Xeon(R) CPU X5355 @ 2.66GHz</entry>
+            <entry>32</entry>
+            <entry>8192</entry>
+            <entry>-</entry>
+          </row>
+          <row>
+            <entry>Intel(R) Xeon(R) CPU E5430 @ 2.66GHz</entry>
+            <entry>32</entry>
+            <entry>6144</entry>
+            <entry>-</entry>
+          </row>
+          <row>
+            <entry>Intel(R) Xeon(R) CPU X5560 @ 2.80GHz</entry>
+            <entry>32</entry>
+            <entry>256</entry>
+            <entry>8192</entry>
+          </row>
+          <row>
+            <entry>Intel(R) Core(TM)2 CPU 6600 @ 2.40GHz</entry>
+            <entry>32</entry>
+            <entry>4096</entry>
+            <entry>-</entry>
+          </row>
+          <row>
+            <entry>Intel(R) Core(TM)2 Quad CPU Q6600 @ 2.40GHz</entry>
+            <entry>32</entry>
+            <entry>4096</entry>
+            <entry>-</entry>
+          </row>
+          <row>
+            <entry>Intel(R) Core(TM)2 Duo CPU E6850 @ 3.00GHz</entry>
+            <entry>32</entry>
+            <entry>4096</entry>
+            <entry>-</entry>
+          </row>
+          <row>
+            <entry>Intel(R) Core(TM)2 Duo CPU E8400 @ 3.00GHz</entry>
+            <entry>32</entry>
+            <entry>6144</entry>
+            <entry>-</entry>
+          </row>
+          <row>
+            <entry>Intel(R) Core(TM)2 Duo CPU P8600 @ 2.40GHz</entry>
+            <entry>32</entry>
+            <entry>3072</entry>
+            <entry>-</entry>
+          </row>
+          <row>
+            <entry>Intel(R) Core(TM) i5 CPU 660 @ 3.33GHz</entry>
+            <entry>32</entry>
+            <entry>256</entry>
+            <entry>4096</entry>
+          </row>
+          <row>
+            <entry>Intel(R) Core(TM) i7-2600 CPU @ 3.40GHz</entry>
+            <entry>32</entry>
+            <entry>256</entry>
+            <entry>8192</entry>
+          </row>
+        </tbody>
+      </tgroup>
+      <caption>Linux benchmark machines, listed with the size of each level of cache (in kilobytes)</caption>
+    </table>
+    <para id="id140740"><link target-id="uid1"/> presents a summary of the Linux machines that were used to run benchmarks. The majority of the machines were functioning as either lab workstations or servers in a University environment. The benchmarks took approximately 12 hours to run, and while efforts were made to reduce each machine's load to a minimum, there were still transient system processes, such as log rotations and backups during the night that have introduced noise into the results.</para>
+    <para id="id140755">For the Linux benchmarks, both 32-bit and 64-bit statically-linked binaries for SFFT, FFTW 3.3 and SPIRAL were
+compiled with icc 12.0.5, gcc 4.4.5 and clang 1.1. For the OS X benchmarks, 32-bit and 64-bit binaries for SFFT, FFTW 3.3 and SPIRAL were compiled with icc 12.1.0, llvm-gcc 4.2.1 and clang 3.0. The builds of SFFT and FFTW 3.3.1 for iOS 5 on ARM NEON were compiled with Apple clang 3.0.</para>
+    <para id="id140762">Several binary libraries were also benchmarked: Intel IPP 7 and Apple Accelerate. Because these libraries are only available in binary form, they are compared against the icc builds of SFFT, FFTW 3.3 and SPIRAL, because icc generally produced the fastest code.</para>
+    <section id="cid1">
+      <title>Speed</title>
+      <para id="id140776">The speed results are presented in subsections according to the SIMD extensions: SSE, AVX and ARM NEON.</para>
+      <section id="uid2">
+        <title>SSE</title>
+        <figure id="uid3">
+          <media id="uid3_media" alt="">
+            <image mime-type="image/png" src="../../media/fftw3-estimate.png" id="uid3_onlineimage" width="583"><!-- NOTE: attribute width changes image size online (pixels). original width is 583. --></image>
+            <image mime-type="application/postscript" for="pdf" src="../../media/fftw3-estimate.eps" id="uid3_printimage" print-width="0.8">
+              <!--NOTE: attribute width changes image size in printed PDF (if specified in .tex file)-->
+            </image>
+          </media>
+          <caption>Performance comparison between SFFT and FFTW 3.3 in estimate mode on SSE machines</caption>
+        </figure>
+        <figure id="uid4">
+          <media id="uid4_media" alt="">
+            <image mime-type="image/png" src="../../media/fftw3-patient.png" id="uid4_onlineimage" width="583"><!-- NOTE: attribute width changes image size online (pixels). original width is 583. --></image>
+            <image mime-type="application/postscript" for="pdf" src="../../media/fftw3-patient.eps" id="uid4_printimage" print-width="0.8">
+              <!--NOTE: attribute width changes image size in printed PDF (if specified in .tex file)-->
+            </image>
+          </media>
+          <caption>Performance comparison between SFFT and FFTW 3.3 in patient mode on SSE machines</caption>
+        </figure>
+        <figure id="uid5">
+          <media id="uid5_media" alt="">
+            <image mime-type="image/png" src="../../media/spiral.png" id="uid5_onlineimage" width="583"><!-- NOTE: attribute width changes image size online (pixels). original width is 583. --></image>
+            <image mime-type="application/postscript" for="pdf" src="../../media/spiral.eps" id="uid5_printimage" print-width="0.8">
+              <!--NOTE: attribute width changes image size in printed PDF (if specified in .tex file)-->
+            </image>
+          </media>
+          <caption>Performance comparison between SFFT and SPIRAL on SSE machines. Although SPIRAL is faster when compiled with clang 1.1, <link target-id="uid14"/> shows that SFFT is faster than SPIRAL when compiled with clang 3.0</caption>
+        </figure>
+        <para id="id140837"><link target-id="uid3"/> summarizes the speed performance of SFFT against FFTW 3.3 running in estimate mode on Linux machines with SSE. Twelve heatmaps are used to present data from different configurations. The three rows in the grid correspond to the three different compilers used, while the four columns correspond to the four different architecture and floating-point precision pairs. Within each heatmap, the rows correspond to different machines, and the columns correspond to different sizes of transform (<m:math overflow="scroll"><m:msup><m:mn>2</m:mn><m:mn>1</m:mn></m:msup></m:math> through to <m:math overflow="scroll"><m:msup><m:mn>2</m:mn><m:mn>18</m:mn></m:msup></m:math>). Shades of green indicate that SFFT is faster for a particular point of data, while shades of yellow through to red indicate that FFTW is faster; lighter shades indicate a small difference, while darker shades indicate a bigger difference in performance. The scale for the colour map is computed separately for each of the 12 heatmaps in the grid, so a particular colour in one heatmap is not directly comparable to the same colour in another heatmap; the colours are only meant to indicate differences within each heatmap.</para>
+        <para id="id140880">Similarily, <link target-id="uid4"/> compares SFFT to FFTW 3.3 running in patient mode, and <link target-id="uid5"/> compares SFFT to SPIRAL. There are fewer columns in the heatmaps of <link target-id="uid5"/> because SPIRAL only computes single-threaded FFTs for sizes <m:math overflow="scroll"><m:msup><m:mn>2</m:mn><m:mn>1</m:mn></m:msup></m:math> through to <m:math overflow="scroll"><m:msup><m:mn>2</m:mn><m:mn>13</m:mn></m:msup></m:math>.</para>
+        <section id="uid6">
+          <title>FFTW 3.3 in estimate mode</title>
+          <para id="id140932"><link target-id="uid3"/> shows that SFFT is faster than FFTW 3.3 running in estimate mode in almost all cases over a range of Intel x86 machines that implement SSE. The horizontal streaks of yellow-red that can be seen in some heatmaps are outliers and likely caused by transient system processes that were running while SFFT was being benchmarked. Similar streaks appear at the same locations in Figures <link target-id="uid4"/> and <link target-id="uid5"/>.</para>
+        </section>
+        <section id="uid7"><title>FFTW 3.3 in patient mode</title><figure id="uid8" orient="horizontal">
+            <subfigure id="uid9">
+              <media id="uid9_media" alt="">
+                <image mime-type="image/png" src="../../media/corei7_sse_single.png" id="uid9_onlinemedia" width="250"><!-- NOTE: attribute width changes image size online (pixels). original width is 250. --></image>
+                <image mime-type="application/postscript" for="pdf" src="../../media/corei7_sse_single.eps" id="uid9_printmedia" print-width="0.65">
+                  <!--NOTE: attribute width changes image size in printed PDF (if specified in .tex file)-->
+                </image>
+              </media>
+              <caption>Core i7-2600, single-precision</caption>
+            </subfigure>
+            <subfigure id="uid10">
+              <media id="uid10_media" alt="">
+                <image mime-type="image/png" src="../../media/corei7_sse_double.png" id="uid10_onlinemedia" width="250"><!-- NOTE: attribute width changes image size online (pixels). original width is 250. --></image>
+                <image mime-type="application/postscript" for="pdf" src="../../media/corei7_sse_double.eps" id="uid10_printmedia" print-width="0.65">
+                  <!--NOTE: attribute width changes image size in printed PDF (if specified in .tex file)-->
+                </image>
+              </media>
+              <caption>Core i7-2600, double-precision</caption>
+            </subfigure>
+            <subfigure id="uid11">
+              <media id="uid11_media" alt="">
+                <image mime-type="image/png" src="../../media/corei5_sse_single.png" id="uid11_onlinemedia" width="250"><!-- NOTE: attribute width changes image size online (pixels). original width is 250. --></image>
+                <image mime-type="application/postscript" for="pdf" src="../../media/corei5_sse_single.eps" id="uid11_printmedia" print-width="0.65">
+                  <!--NOTE: attribute width changes image size in printed PDF (if specified in .tex file)-->
+                </image>
+              </media>
+              <caption>Core i5-2557M, single-precision</caption>
+            </subfigure>
+            <subfigure id="uid12">
+              <media id="uid12_media" alt="">
+                <image mime-type="image/png" src="../../media/corei5_sse_double.png" id="uid12_onlinemedia" width="250"><!-- NOTE: attribute width changes image size online (pixels). original width is 250. --></image>
+                <image mime-type="application/postscript" for="pdf" src="../../media/corei5_sse_double.eps" id="uid12_printmedia" print-width="0.65">
+                  <!--NOTE: attribute width changes image size in printed PDF (if specified in .tex file)-->
+                </image>
+              </media>
+              <caption>Core i5-2557M, double-precision</caption>
+            </subfigure>
+            <caption>Performance of FFTs on recent Sandy Bridge machines, with x86_64 SSE binaries. Compiler: icc</caption>
+          </figure>
+          <para id="id141033"><link target-id="uid4"/> shows that SFFT is faster than FFTW 3.3 running in patient mode in the majority of cases over a range of Intel x86 machines that implement SSE. SFFT was generally slightly slower than fftw3-patient on older machines such as the Pentium 4's and the 1GHz Pentium M, while on the newer machines such as the Sandy Bridge based Core i7-2600 and the Nehalem based Core i5-660, SFFT was clearly faster than FFTW (see <link target-id="uid8"/>). This could be explained by the fact that FFTW performs extensive instruction level optimizations, such as scheduling, and that the older processors have smaller instruction and trace caches.</para>
+        </section><section id="uid13"><title>SPIRAL</title><figure id="uid14" orient="horizontal">
+            <subfigure id="uid15">
+              <media id="uid15_media" alt="">
+                <image mime-type="image/png" src="../../media/p8600_clang1_single.png" id="uid15_onlinemedia" width="250"><!-- NOTE: attribute width changes image size online (pixels). original width is 250. --></image>
+                <image mime-type="application/postscript" for="pdf" src="../../media/p8600_clang1_single.eps" id="uid15_printmedia" print-width="0.65">
+                  <!--NOTE: attribute width changes image size in printed PDF (if specified in .tex file)-->
+                </image>
+              </media>
+              <caption>Single-precision, clang 1.1</caption>
+            </subfigure>
+            <subfigure id="uid16">
+              <media id="uid16_media" alt="">
+                <image mime-type="image/png" src="../../media/p8600_clang1_double.png" id="uid16_onlinemedia" width="250"><!-- NOTE: attribute width changes image size online (pixels). original width is 250. --></image>
+                <image mime-type="application/postscript" for="pdf" src="../../media/p8600_clang1_double.eps" id="uid16_printmedia" print-width="0.65">
+                  <!--NOTE: attribute width changes image size in printed PDF (if specified in .tex file)-->
+                </image>
+              </media>
+              <caption>Double-precision, clang 1.1</caption>
+            </subfigure>
+            <subfigure id="uid17">
+              <media id="uid17_media" alt="">
+                <image mime-type="image/png" src="../../media/p8600_clang3_single.png" id="uid17_onlinemedia" width="250"><!-- NOTE: attribute width changes image size online (pixels). original width is 250. --></image>
+                <image mime-type="application/postscript" for="pdf" src="../../media/p8600_clang3_single.eps" id="uid17_printmedia" print-width="0.65">
+                  <!--NOTE: attribute width changes image size in printed PDF (if specified in .tex file)-->
+                </image>
+              </media>
+              <caption>Single-precision, clang 3.0</caption>
+            </subfigure>
+            <subfigure id="uid18">
+              <media id="uid18_media" alt="">
+                <image mime-type="image/png" src="../../media/p8600_clang3_double.png" id="uid18_onlinemedia" width="250"><!-- NOTE: attribute width changes image size online (pixels). original width is 250. --></image>
+                <image mime-type="application/postscript" for="pdf" src="../../media/p8600_clang3_double.eps" id="uid18_printmedia" print-width="0.65">
+                  <!--NOTE: attribute width changes image size in printed PDF (if specified in .tex file)-->
+                </image>
+              </media>
+              <caption>Double-precision, clang 3.0</caption>
+            </subfigure>
+            <caption>Performance of clang-compiled x86_64 SSE FFTs on an Intel Core2 Duo P8600</caption>
+          </figure>
+          <para id="id141129">The last row of <link target-id="uid5"/> shows that SFFT is generally slower than SPIRAL when both libraries are compiled with clang 1.1. However, with more recent releases of clang, which do much more code optimization, the situation is reversed, as shown in <link target-id="uid14"/>. In some cases SPIRAL compiled with clang 3.0 is slower than SPIRAL compiled with clang 1.1, while SFFT is generally faster when compiled with clang 3.0. This demonstrates that the speed of automatically tuned SPIRAL code is specific to certain compilers.</para>
+          <para id="id141144">SPIRAL's double-precision performance is slightly better than SFFT when compiled with icc or gcc, while SFFT's single-precision code is faster than SPIRAL on recent machines, and of similar speed on older machines.</para>
+        </section></section>
+      <section id="uid19"><title>AVX</title><para id="id141159">Of the machines that were used for benchmarks, only two supported AVX: the Macbook Air 4,2 with an Intel Core i5-2557M, and a Linux machine with an Intel Core i7-2600. <link target-id="uid20"/> shows that SFFT is clearly faster than FFTW up until about 1024 points, while performance between the two is similar for larger transforms.</para>
+        <para id="id141170">Results for Intel IPP are also plotted in <link target-id="uid20"/>, but only for the Core i7-2600. IPP did not detect the existence of AVX on the Core i5-2557M, and instead used SSE, as plotted in <link target-id="uid8"/>. Apple vDSP does not support AVX, and so SSE vDSP results for the Macbook Air 4,2's Core i5-2557M are also plotted in <link target-id="uid8"/>.</para>
+        <figure id="uid20" orient="horizontal">
+          <subfigure id="uid21">
+            <media id="uid21_media" alt="">
+              <image mime-type="image/png" src="../../media/corei7_avx_single.png" id="uid21_onlinemedia" width="250"><!-- NOTE: attribute width changes image size online (pixels). original width is 250. --></image>
+              <image mime-type="application/postscript" for="pdf" src="../../media/corei7_avx_single.eps" id="uid21_printmedia" print-width="0.65">
+                <!--NOTE: attribute width changes image size in printed PDF (if specified in .tex file)-->
+              </image>
+            </media>
+            <caption>Core i7-2600, single-precision</caption>
+          </subfigure>
+          <subfigure id="uid22">
+            <media id="uid22_media" alt="">
+              <image mime-type="image/png" src="../../media/corei7_avx_double.png" id="uid22_onlinemedia" width="250"><!-- NOTE: attribute width changes image size online (pixels). original width is 250. --></image>
+              <image mime-type="application/postscript" for="pdf" src="../../media/corei7_avx_double.eps" id="uid22_printmedia" print-width="0.65">
+                <!--NOTE: attribute width changes image size in printed PDF (if specified in .tex file)-->
+              </image>
+            </media>
+            <caption>Core i7-2600, double-precision</caption>
+          </subfigure>
+          <subfigure id="uid23">
+            <media id="uid23_media" alt="">
+              <image mime-type="image/png" src="../../media/corei5_avx_single.png" id="uid23_onlinemedia" width="250"><!-- NOTE: attribute width changes image size online (pixels). original width is 250. --></image>
+              <image mime-type="application/postscript" for="pdf" src="../../media/corei5_avx_single.eps" id="uid23_printmedia" print-width="0.65">
+                <!--NOTE: attribute width changes image size in printed PDF (if specified in .tex file)-->
+              </image>
+            </media>
+            <caption>Core i5-2557M, single-precision</caption>
+          </subfigure>
+          <subfigure id="uid24">
+            <media id="uid24_media" alt="">
+              <image mime-type="image/png" src="../../media/corei5_avx_double.png" id="uid24_onlinemedia" width="250"><!-- NOTE: attribute width changes image size online (pixels). original width is 250. --></image>
+              <image mime-type="application/postscript" for="pdf" src="../../media/corei5_avx_double.eps" id="uid24_printmedia" print-width="0.65">
+                <!--NOTE: attribute width changes image size in printed PDF (if specified in .tex file)-->
+              </image>
+            </media>
+            <caption>Core i5-2557M, double-precision</caption>
+          </subfigure>
+          <caption>Performance of FFTs on recent Sandy Bridge machines, with x86_64 AVX binaries. Compiler: icc</caption>
+        </figure>
+      </section><section id="uid25"><title>ARM NEON</title><figure id="uid26" orient="horizontal">
+          <subfigure id="uid27">
+            <media id="uid27_media" alt="">
+              <image mime-type="image/png" src="../../media/applea4.png" id="uid27_onlinemedia" width="250"><!-- NOTE: attribute width changes image size online (pixels). original width is 250. --></image>
+              <image mime-type="application/postscript" for="pdf" src="../../media/applea4.eps" id="uid27_printmedia" print-width="0.65">
+                <!--NOTE: attribute width changes image size in printed PDF (if specified in .tex file)-->
+              </image>
+            </media>
+            <caption>Apple A4 (ARM Cortex-A8)</caption>
+          </subfigure>
+          <subfigure id="uid28">
+            <media id="uid28_media" alt="">
+              <image mime-type="image/png" src="../../media/applea5.png" id="uid28_onlinemedia" width="250"><!-- NOTE: attribute width changes image size online (pixels). original width is 250. --></image>
+              <image mime-type="application/postscript" for="pdf" src="../../media/applea5.eps" id="uid28_printmedia" print-width="0.65">
+                <!--NOTE: attribute width changes image size in printed PDF (if specified in .tex file)-->
+              </image>
+            </media>
+            <caption>Apple A5 (ARM Cortex-A9)</caption>
+          </subfigure>
+          <caption>Performance of single-precision FFTs on ARM NEON devices running iOS. Compiler: Apple clang 3.0</caption>
+        </figure>
+        <para id="id141311">SFFT and FFTW 3.3.1 were compiled with Apple clang 3.0 and benchmarked on an Apple iPod touch 4G and an Apple iPad 2, which contain the Apple A4 and A5 SoCs respectively. The A4 implements the ARM Cortex-A8, while the A5 implements the ARM Cortex-A9, both of which support ARM NEON.</para>
+        <para id="id141317"><link target-id="uid26"/> shows that SFFT is easily faster than FFTW on both devices. This contradicts Frigo and Johnson's claim that the performance of FFTW is portable, and tends to support the idea that it is possible to write fast and portable code without exhaustive searches through the configuration space of all possible FFTs.</para>
+        <para id="id141327">A considerable amount of effort was needed to work around several problems that were encountered when targeting ARM NEON with Apple clang 3.0, and many of SFFT's primitive macros for NEON were written in inline assembly code. Among the problems encountered when targeting ARM NEON with Apple clang 3.0:</para>
+        <list id="id141333" display="block" list-type="enumerated">
+          <item id="uid29">There is no way of explicitly specifying memory alignment when using vector intrinsics;
+</item>
+          <item id="uid30">Fused multiply-add/subtract intrinsics do not currently compile to the correct instructions because of a bug in clang;
+</item>
+          <item id="uid31">Clang's inline assembly front-end lacks the syntax and semantics to properly address the dual-size aliased vector registers.
+</item>
+        </list>
+        <para id="id141374">The above problems affect all FFT libraries equally, and it seems that portability depends critically on the quality of the machine specific code and macros.</para>
+      </section></section>
+    <section id="cid2"><title>Accuracy</title><figure id="uid32" orient="horizontal">
+        <subfigure id="uid33">
+          <media id="uid33_media" alt="">
+            <image mime-type="image/png" src="../../media/corei7_acc_single.png" id="uid33_onlinemedia" width="239"><!-- NOTE: attribute width changes image size online (pixels). original width is 239. --></image>
+            <image mime-type="application/postscript" for="pdf" src="../../media/corei7_acc_single.eps" id="uid33_printmedia" print-width="0.65">
+              <!--NOTE: attribute width changes image size in printed PDF (if specified in .tex file)-->
+            </image>
+          </media>
+          <caption>SSE, single-precision</caption>
+        </subfigure>
+        <subfigure id="uid34">
+          <media id="uid34_media" alt="">
+            <image mime-type="image/png" src="../../media/corei7_acc_double.png" id="uid34_onlinemedia" width="243"><!-- NOTE: attribute width changes image size online (pixels). original width is 243. --></image>
+            <image mime-type="application/postscript" for="pdf" src="../../media/corei7_acc_double.eps" id="uid34_printmedia" print-width="0.65">
+              <!--NOTE: attribute width changes image size in printed PDF (if specified in .tex file)-->
+            </image>
+          </media>
+          <caption>SSE, double-precision</caption>
+        </subfigure>
+        <caption>Accuracy of FFTs on an Intel Core i7-2600. SFFT, FFTW and SPIRAL were compiled for x86_64 with icc</caption>
+      </figure>
+      <para id="id141608">The accuracy of each FFT was measured as per the methods in <link document="m43804">Benchmark methods</link>. The accuracy of single and double precision FFTs on an Intel Core i7-2600 is plotted in <link target-id="uid32"/>, and shows that the relative RMS error for FFTW, SFFT and SPIRAL is within an acceptable range. Graphs for all other machines are similar.</para></section><section id="cid3"><title>Setup time</title><figure id="uid35" orient="horizontal">
+        <subfigure id="uid36">
+          <media id="uid36_media" alt="">
+            <image mime-type="image/png" src="../../media/corei7_setup_single.png" id="uid36_onlinemedia" width="252"><!-- NOTE: attribute width changes image size online (pixels). original width is 252. --></image>
+            <image mime-type="application/postscript" for="pdf" src="../../media/corei7_setup_single.eps" id="uid36_printmedia" print-width="0.65">
+              <!--NOTE: attribute width changes image size in printed PDF (if specified in .tex file)-->
+            </image>
+          </media>
+          <caption>SSE, single-precision</caption>
+        </subfigure>
+        <subfigure id="uid37">
+          <media id="uid37_media" alt="">
+            <image mime-type="image/png" src="../../media/corei7_setup_double.png" id="uid37_onlinemedia" width="252"><!-- NOTE: attribute width changes image size online (pixels). original width is 252. --></image>
+            <image mime-type="application/postscript" for="pdf" src="../../media/corei7_setup_double.eps" id="uid37_printmedia" print-width="0.65">
+              <!--NOTE: attribute width changes image size in printed PDF (if specified in .tex file)-->
+            </image>
+          </media>
+          <caption>SSE, double-precision</caption>
+        </subfigure>
+        <caption>Setup times of FFTs on an Intel Core i7-2600. SFFT, FFTW and SPIRAL were compiled for x86_64 with icc</caption>
+      </figure>
+      <para id="id141672"><link target-id="uid35"/> shows that FFTW, in patient mode, requires several orders of magnitude more time to initialize as it searches for a fast FFT configuration. SPIRAL has a very fast setup time, because it is entirely statically elaborated and needs no dynamic initialization. The setup time for SFFT is comparable to FFTW in estimate mode, though SFFT's setup time begins to increase for transforms larger than 8192 points. This is likely because of repeated calls to the complex exponential function as twiddle factor LUTs are elaborated; no effort was made to optimize this setup code, and it is likely that it would be much faster if the calls to the complex exponential function were optimized.</para>
+      <para id="id141685">Graphs for all other machines are similar.</para>
+    </section><section id="cid4">
+      <title>Binary size</title>
+      <para id="id141698">Compared to other libraries, SFFT produced larger binaries for the benchmarks, because there is currently
+no optimization performed between transforms contained in the same library. For 64-bit single precision binaries on OS X with AVX, the size of the SFFT benchmark was approximately 2.8 megabytes while the size of the FFTW benchmark was 1.8 megabytes.</para>
+    </section>
+    <section id="cid5">
+      <title>Predicting performance</title>
+      <para id="id141714">For each size of transform on a particular machine, SFFT chooses the fastest configuration from a set of up to eight possible configurations. Small transforms have only one option, which is a fully hard-coded transform, while larger transforms have up to eight, which could include the four-step transform, and several variants of the hard-coded leaf transform, where each variant corresponds to a particular size of leaf sub-transform and size of body sub-transform, and for size-16 leaf sub-transforms, a streaming store variant is included too. The decision of exactly which configuration to use depends on the size of transform, the compiler, and the characteristics of the host machine.</para>
+      <para id="id141723">For the benchmarks in this chapter, SFFT used a calibration routine to choose the fastest configuration. The calibration data was collected, along with some data about the machine and the compiler, and used to train a classifier.</para>
+      <para id="id141728">The data was processed into instances, with each instance having attributes for the size of the transform and the precision, the size of each level of cache, the architecture and micro-architecture of the machine, the SIMD extensions, the OS, the compiler used, and the CPU frequency. In total there were 3348 instances of data, each of which had 12 attributes.</para>
+      <para id="id141735">Weka <link target-id="bid0"/> was used to experiment with several classifiers, and a REPTree classifier with bagging was used to train a model. Using 10-fold cross-validation, the model correctly classified 76.1% of the instances with a weighted average precision of 74.8%, which tends to confirm the existence of a relationship between the characteristics of the machine and the performance of a particular FFT configuration.</para>
+      <para id="id141747">The accuracy of the classifier is promising, and it has the potential to replace the calibration code in SFFT. It is highly likely that if the noise in the data was reduced through the use of an isolated benchmarking environment, the accuracy of the classifier would increase. The accuracy would also likely benefit from a larger dataset collected from a larger range of benchmark machines.</para>
+    </section>
+    <section id="cid6"><title>Split-radix vs. conjugate-pair</title><figure id="uid38" orient="horizontal">
+        <subfigure id="uid39">
+          <media id="uid39_media" alt="">
+            <image mime-type="image/png" src="../../media/ordinary_single.png" id="uid39_onlinemedia" width="250"><!-- NOTE: attribute width changes image size online (pixels). original width is 250. --></image>
+            <image mime-type="application/postscript" for="pdf" src="../../media/ordinary_single.eps" id="uid39_printmedia" print-width="0.65">
+              <!--NOTE: attribute width changes image size in printed PDF (if specified in .tex file)-->
+            </image>
+          </media>
+          <caption>SSE, single-precision</caption>
+        </subfigure>
+        <subfigure id="uid40">
+          <media id="uid40_media" alt="">
+            <image mime-type="image/png" src="../../media/ordinary_double.png" id="uid40_onlinemedia" width="246"><!-- NOTE: attribute width changes image size online (pixels). original width is 246. --></image>
+            <image mime-type="application/postscript" for="pdf" src="../../media/ordinary_double.eps" id="uid40_printmedia" print-width="0.65">
+              <!--NOTE: attribute width changes image size in printed PDF (if specified in .tex file)-->
+            </image>
+          </media>
+          <caption>SSE, double-precision</caption>
+        </subfigure>
+        <caption>Ordinary split-radix versus conjugate-pair split-radix on an Intel Core i5-2557M. SFFT, FFTW and SPIRAL were compiled for x86_64 with icc</caption>
+      </figure>
+      <para id="id141804">In order to quantify the gain in performance that might be attributable to the use of the conjugate-pair algorithm, SFFT was retrospectively modified to compute the FFT using the ordinary split-radix algorithm as well as the conjugate-pair algorithm. The results of benchmarks between the two algorithms, as well as FFTW and SPIRAL,
+are plotted in <link target-id="uid38"/>.</para>
+      <para id="id141817">Unexpectedly, the ordinary split-radix algorithm is faster than the conjugate-pair algorithm for some smaller sizes of transform, but for transforms above a certain size, the conjugate-pair algorithm is faster by a few hundred MFLOPS.</para>
+      <para id="id141822">The performance advantage of the ordinary split-radix algorithm for smaller sizes of transforms is likely due to shorter chains of dependent instructions where twiddle factors are loaded and used. Consider that the ordinary split-radix algorithm separately loads two twiddle factors into two registers, and there are no dependencies between these instructions, while the conjugate-pair algorithm must load one twiddle factor and then duplicate it into another register, which does result in dependent instructions. Thus the ordinary split-radix algorithm is faster for smaller transforms where memory bandwidth is not the limiting factor, but when memory bandwidth does become the limiting factor, the conjugate-pair algorithm is faster.</para>
+      <para id="id141832">In future, SFFT could exploit the performance advantage of the ordinary split-radix algorithm when computing smaller sizes of transforms.</para>
+    </section><section id="cid7">
+      <title>Applications of this work</title>
+      <para id="id141846">This section provides an overview of how the techniques presented in this thesis may be applied to the prime-factor algorithm, sparse Fourier transforms, and multi-threaded transforms.</para>
+      <section id="uid41">
+        <title>Prime-factor algorithm</title>
+        <para id="id141859">The techniques presented in this work rely on the fact that FFTs operating on signal lengths that are a power-of-two can be factored into smaller power-of-two length components, which are computed in parallel by being evenly divided into a number of SIMD vector registers that are a power-of-two length.</para>
+        <para id="id141865">The prime-factor algorithm factors other lengths of FFTs into components that are co-prime in length, and ultimately small prime components, which do not evenly divide into the power-of-two length SIMD registers, except in the special case where a SIMD register contains only one complex element (such is the case with double-precision on SSE machines).</para>
+        <para id="id141871">Because the prime components do not evenly divide into power-of-two length SIMD registers, the algorithm level vectorization techniques presented in this work are not directly applicable. In contrast, the auto-vectorization techniques used in SPIRAL <link target-id="bid1"/>, <link target-id="bid2"/>, <link target-id="bid3"/> are performed at the instruction level, and are applicable to the prime-factor algorithm, but as the results in <link target-id="uid8"/> show, the downside of SPIRAL's lower level approach is that performance for power-of-two transforms scales poorly with the length of the SIMD register.</para>
+      </section>
+      <section id="uid42">
+        <title>Sparse Fourier transforms</title>
+        <para id="id141911">The recently published Sparse FFT <link target-id="bid4"/>, <link target-id="bid5"/> will benefit from the techniques presented in this work because the inner loops use small DFTs (e.g, 512 point for a certain 256k point sparse FFT), which are currently computed with FFTW. Replacing FFTW with SFFT will almost certainly result in improved performance, because SFFT is faster than both FFTW and Intel IPP for the applicable small sizes of transform on an Intel Core i7-2600 (see <link target-id="uid20"/>).</para>
+        <para id="id141936">Version 2.0 of the Sparse FFT code is scalar, and would benefit greatly from explicitly describing the computation with SIMD intrinsics. However, a key difference between the sparse Fourier transform and other FFTs is the use of conditional branches on the input signal data. This has performance implications on all machines, but it is worth noting that some machines will be drastically affected by this, such as the ARM Cortex-A8, where the SIMD pipeline is located behind the main pipeline, resulting in fast transfers from the main CPU unit to the SIMD pipeline, but large penalties when SIMD registers or flags are accessed by the main CPU unit.</para>
+      </section>
+      <section id="uid43">
+        <title>Multi-threaded transforms</title>
+        <figure id="uid44">
+          <media id="uid44_media" alt="">
+            <image mime-type="image/png" src="../../media/threaded.png" id="uid44_onlineimage" width="511"><!-- NOTE: attribute width changes image size online (pixels). original width is 511. --></image>
+            <image mime-type="application/postscript" for="pdf" src="../../media/threaded.eps" id="uid44_printimage" print-width="0.65">
+              <!--NOTE: attribute width changes image size in printed PDF (if specified in .tex file)-->
+            </image>
+          </media>
+          <caption>Speed of multi-threaded four-step algorithm running on an Intel Core i5-2557M with four threads. The algorithm decomposes transforms into smaller single-threaded components, which are computed above with three different implementations. All code was compiled with icc for x86_64 with SSE.</caption>
+        </figure>
+        <para id="id141971">MatrixFFT has recently shown that the four-step algorithm <link target-id="bid6"/>, designed to efficiently use hierarchical or external memory on Cray machines in the 1980's, is useful for computing large multi-threaded transforms on modern machines, providing performance far surpassing that of FFTW's multi-threaded performance <link target-id="bid7"/>.</para>
+        <para id="id141991">The four-step algorithm decomposes a transform of size <m:math overflow="scroll"><m:mi>N</m:mi></m:math> into a two-dimensional array of size <m:math overflow="scroll"><m:mrow><m:msub><m:mi>n</m:mi><m:mn>1</m:mn></m:msub><m:mo>×</m:mo><m:msub><m:mi>n</m:mi><m:mn>2</m:mn></m:msub></m:mrow></m:math> where <m:math overflow="scroll"><m:mrow><m:mi>N</m:mi><m:mo>=</m:mo><m:msub><m:mi>n</m:mi><m:mn>1</m:mn></m:msub><m:msub><m:mi>n</m:mi><m:mn>2</m:mn></m:msub></m:mrow></m:math>, and <m:math overflow="scroll"><m:mrow><m:msub><m:mi>n</m:mi><m:mn>1</m:mn></m:msub><m:mo>=</m:mo><m:msub><m:mi>n</m:mi><m:mn>2</m:mn></m:msub><m:mo>=</m:mo><m:msqrt><m:mi>N</m:mi></m:msqrt></m:mrow></m:math> (or close) often obtains the best performance.</para>
+        <para id="id142088">The four-steps of the algorithm are:</para>
+        <list id="id142092" display="block" list-type="enumerated">
+          <item id="uid45">Compute <m:math overflow="scroll"><m:msub><m:mi>n</m:mi><m:mn>1</m:mn></m:msub></m:math> FFTs of length <m:math overflow="scroll"><m:msub><m:mi>n</m:mi><m:mn>2</m:mn></m:msub></m:math> along the columns of the array;
+</item>
+          <item id="uid46">Multiply each element of the array with <m:math overflow="scroll"><m:msubsup><m:mi>ω</m:mi><m:mi>N</m:mi><m:mrow><m:mi>i</m:mi><m:mi>j</m:mi></m:mrow></m:msubsup></m:math>, where <m:math overflow="scroll"><m:mi>i</m:mi></m:math> and <m:math overflow="scroll"><m:mi>j</m:mi></m:math> are the array
+coordinates;
+</item>
+          <item id="uid47">Transpose the array;
+</item>
+          <item id="uid48">Compute <m:math overflow="scroll"><m:msub><m:mi>n</m:mi><m:mn>2</m:mn></m:msub></m:math> FFTs of length <m:math overflow="scroll"><m:msub><m:mi>n</m:mi><m:mn>1</m:mn></m:msub></m:math> along the columns of the array.
+</item>
+        </list>
+        <para id="id142242">Each step can be divided amongst a pool of threads, with a synchronisation barrier between the third and fourth steps. The transforms in steps one and four operate on sequential data, and if they are small enough, they are not subject to bandwidth limitations (and if they are not small enough, they can be further decomposed with the four-step algorithm until they are small enough). The bandwidth bottleneck does not disappear, but it is factored out into the transpose in step three, and because of this, the performance of the small single-threaded 1D transforms used in steps one and four correlate with the overall multi-threaded performance. A simple multi-threaded implementation of the four-step algorithm was benchmarked with SFFT and FFTW transforms, and the results are shown in <link target-id="uid44"/>, which tends to confirm that the performance of single-threaded transforms for steps one and four translates to the overall multi-threaded performance when using the four-step algorithm.</para>
+      </section>
+    </section>
+    <section id="cid8">
+      <title>Similar work</title>
+      <para id="id142274">Aside from Bernstein's FFT library, which was designed in the days of scalar microprocessors and has not been updated since 1999, there have been a few other challenges to the automatically adaptive approach of FFTW, but none present concrete results that definitively dismiss the idea. Most recently, Vasilios et al. presented an approach that uses the characteristics of the host machine to choose good FFT parameters at run time <link target-id="bid8"/>, but their approach has several issues that render it almost irrelevant. First, the approach uses optimizations that only apply to scalar machines, viz. twiddle factor symmetries are exploited to compress the twiddle LUTs, and arithmetic is avoided when twiddle factors contains zeros or ones. The vast majority of microprocessors, even those found in mobile devices such as phones, feature SIMD extensions, and so an approach that is limited to scalar arithmetic is of little consequence. Second, they benchmark the FFTs in a most unusual way. Rather than repeat a large number of iterations of the FFT, they repeat a large number of iterations of a binary that initializes and then executes only one FFT; such an approach is by no means representative of applications where the performance of the FFT is a concern, and is more a measurement of the initialization time rather than the FFT.</para>
+    </section>
+  </content>
+  <bib:file>
+    <bib:entry id="bid6">
+      <bib:inproceedings>
+        <!--required fields-->
+        <bib:author>Bailey, D.H.</bib:author>
+        <bib:title>FFTs in external or hierarchical memory</bib:title>
+        <bib:booktitle>Proceedings of the 1989 ACM/IEEE conference on Supercomputing</bib:booktitle>
+        <bib:year>1989</bib:year>
+        <!--optional fields-->
+        <bib:editor/>
+        <bib:number/>
+        <bib:series/>
+        <bib:pages>234–242</bib:pages>
+        <bib:address/>
+        <bib:month/>
+        <bib:organization>ACM</bib:organization>
+        <bib:publisher/>
+        <bib:note/>
+      </bib:inproceedings>
+    </bib:entry>
+    <bib:entry id="bid1">
+      <bib:inproceedings>
+        <!--required fields-->
+        <bib:author>Franchetti, F. and Puschel, M.</bib:author>
+        <bib:title>A SIMD vectorizing compiler for digital signal processing algorithms</bib:title>
+        <bib:booktitle>Parallel and Distributed Processing Symposium., Proceedings International, IPDPS 2002, Abstracts and CD-ROM</bib:booktitle>
+        <bib:year>2002</bib:year>
+        <!--optional fields-->
+        <bib:editor/>
+        <bib:number/>
+        <bib:series/>
+        <bib:pages>20–26</bib:pages>
+        <bib:address/>
+        <bib:month/>
+        <bib:organization>IEEE</bib:organization>
+        <bib:publisher/>
+        <bib:note/>
+      </bib:inproceedings>
+    </bib:entry>
+    <bib:entry id="bid5">
+      <bib:article>
+        <!--required fields-->
+        <bib:author>Hassanieh, H. and Indyk, P. and Katabi, D. and Price, E.</bib:author>
+        <bib:title>Nearly optimal sparse Fourier transform</bib:title>
+        <bib:journal>Arxiv preprint arXiv:1201.2501</bib:journal>
+        <bib:year>2012</bib:year>
+        <!--optional fields-->
+        <bib:volume/>
+        <bib:number/>
+        <bib:pages/>
+        <bib:month/>
+        <bib:note/>
+      </bib:article>
+    </bib:entry>
+    <bib:entry id="bid4">
+      <bib:inproceedings>
+        <!--required fields-->
+        <bib:author>Hassanieh, H. and Indyk, P. and Katabi, D. and Price, E.</bib:author>
+        <bib:title>Simple and practical algorithm for sparse Fourier transform</bib:title>
+        <bib:booktitle>Proceedings of the Twenty-Third Annual ACM-SIAM Symposium on Discrete Algorithms</bib:booktitle>
+        <bib:year>2012</bib:year>
+        <!--optional fields-->
+        <bib:editor/>
+        <bib:number/>
+        <bib:series/>
+        <bib:pages>1183–1194</bib:pages>
+        <bib:address/>
+        <bib:month/>
+        <bib:organization>SIAM</bib:organization>
+        <bib:publisher/>
+        <bib:note/>
+      </bib:inproceedings>
+    </bib:entry>
+    <bib:entry id="bid8">
+      <bib:article>
+        <!--required fields-->
+        <bib:author>Kelefouras, Vasilios I. and Athanasiou, George and Alachiotis, Nikolaos and Michail, Harris E. and Kritikakou, Angeliki and Goutis, Costas E.</bib:author>
+        <bib:title>A Methodology for Speeding Up Fast Fourier Transform Focusing on Memory Architecture Utilization</bib:title>
+        <bib:journal>IEEE Transactions on Signal Processing</bib:journal>
+        <bib:year>2011</bib:year>
+        <!--optional fields-->
+        <bib:volume>59</bib:volume>
+        <bib:number>12</bib:number>
+        <bib:pages>6217-6226</bib:pages>
+        <bib:month/>
+        <bib:note/>
+      </bib:article>
+    </bib:entry>
+    <bib:entry id="bid3">
+      <bib:inproceedings>
+        <!--required fields-->
+        <bib:author>Kral, S. and Franchetti, F. and Lorenz, J. and Ueberhuber, C. and Wurzinger, P.</bib:author>
+        <bib:title>FFT compiler techniques</bib:title>
+        <bib:booktitle>Compiler Construction</bib:booktitle>
+        <bib:year>2004</bib:year>
+        <!--optional fields-->
+        <bib:editor/>
+        <bib:number/>
+        <bib:series/>
+        <bib:pages>2725–2725</bib:pages>
+        <bib:address/>
+        <bib:month/>
+        <bib:organization>Springer</bib:organization>
+        <bib:publisher/>
+        <bib:note/>
+      </bib:inproceedings>
+    </bib:entry>
+    <bib:entry id="bid2">
+      <bib:article>
+        <!--required fields-->
+        <bib:author>Kral, S. and Franchetti, F. and Lorenz, J. and Ueberhuber, C.</bib:author>
+        <bib:title>SIMD vectorization of straight line FFT code</bib:title>
+        <bib:journal>Euro-Par 2003 Parallel Processing</bib:journal>
+        <bib:year>2003</bib:year>
+        <!--optional fields-->
+        <bib:volume/>
+        <bib:number/>
+        <bib:pages>251–260</bib:pages>
+        <bib:month/>
+        <bib:note/>
+      </bib:article>
+    </bib:entry>
+    <bib:entry id="bid7">
+      <bib:techreport>
+        <!--required fields-->
+        <bib:author>R. Crandall, J. Klivington and Mitchell, D.</bib:author>
+        <bib:title>Large-scale FFTs and convolutions on Apple hardware</bib:title>
+        <bib:institution>Apple Inc Advanced Computation Group</bib:institution>
+        <bib:year>2009</bib:year>
+        <!--optional fields-->
+        <bib:type>Technical report</bib:type>
+        <bib:number/>
+        <bib:address/>
+        <bib:month/>
+        <bib:note/>
+      </bib:techreport>
+    </bib:entry>
+    <bib:entry id="bid0">
+      <bib:book>
+        <!--required fields-->
+        <bib:author>Witten, I.H. and Frank, E.</bib:author>
+        <bib:title>Data Mining: Practical machine learning tools and techniques</bib:title>
+        <bib:publisher>Morgan Kaufmann</bib:publisher>
+        <bib:year>2005</bib:year>
+        <!--optional fields-->
+        <bib:volume/>
+        <bib:series/>
+        <bib:address/>
+        <bib:edition/>
+        <bib:month/>
+        <bib:note/>
+      </bib:book>
+    </bib:entry>
+  </bib:file>
+</document>
